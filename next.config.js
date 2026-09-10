@@ -75,6 +75,32 @@ const securityHeaders = [
  */
 const distDir = process.env.NEXT_DIST_DIR || '.next';
 
+/**
+ * ── STANDALONE OUTPUT IS OPT-IN TOO (2026-09-11) ────────────────────────────
+ *
+ * This was an unconditional `output: 'standalone'`. It exists for one thing: a
+ * slim container image. Next traces which files the server actually needs,
+ * writes that list to `.next/next-server.js.nft.json`, then copies just those
+ * into `.next/standalone` so the image can ship without node_modules.
+ *
+ * A managed host runs its OWN tracing pass over the same build and rewrites
+ * that directory as it goes, so the standalone step reaches for a manifest
+ * that was there a moment earlier and is not there now:
+ *
+ *   ENOENT: no such file or directory, open
+ *   '/vercel/path0/.next/next-server.js.nft.json'
+ *
+ * The admin portal never set `output` at all, which is exactly why it deployed
+ * from the same commit while this one did not. Nothing in this repository
+ * consumes `.next/standalone` — there is no Dockerfile here — so the flag was
+ * costing a deployment and buying nothing. It is now asked for by the build
+ * that needs it, the same way the build directory is.
+ *
+ *   npm run build                        -> a normal build, what hosts expect
+ *   NEXT_OUTPUT=standalone npm run build -> .next/standalone, for a container
+ */
+const output = process.env.NEXT_OUTPUT === 'standalone' ? 'standalone' : undefined;
+
 const nextConfig = {
   distDir,
   // Strict mode intentionally OFF: under React 19 + Next 15.1.x the
@@ -83,8 +109,8 @@ const nextConfig = {
   // and being bounced to /login). Re-enable once we move off 15.1.x to a
   // version where the layout-router teardown race is fixed upstream.
   reactStrictMode: false,
-  // Required for the Dockerfile's slim runtime image.
-  output: 'standalone',
+  // Only when explicitly requested; see the note above.
+  ...(output ? { output } : {}),
   async headers() {
     return [
       { source: '/(.*)', headers: securityHeaders },
