@@ -1,0 +1,38 @@
+{
+  "name": "callcenter-simulator-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/next-canonical-cwd.js dev --port 3001",
+    "dev:landing": "node scripts/next-canonical-cwd.js dev --port 3003",
+    "build": "node scripts/next-canonical-cwd.js build",
+    "start": "node scripts/next-canonical-cwd.js start --port 3001",
+    "start:landing": "node scripts/next-canonical-cwd.js start --port 3003",
+    "lint": "node scripts/check-auth-boundary.mjs && eslint .",
+    "ci": "npm run lint && npm run build",
+    "build:local": "NEXT_DIST_DIR=.next-build node scripts/next-canonical-cwd.js build"
+  },
+  "dependencies": {
+    "clsx": "^2.1.0",
+    "lucide-react": "^0.468.0",
+    "next": "^16.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.0",
+    "tailwind-merge": "^2.6.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@tailwindcss/forms": "^0.5.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.4",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.7.0"
+  }
+}

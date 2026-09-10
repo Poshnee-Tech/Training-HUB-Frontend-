@@ -1,0 +1,790 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Two faces, four names.
+
+   Bricolage Grotesque carries display; Instrument Sans carries everything
+   else. The other two variable names are aliases, not extra families:
+
+     --font-mono-ui   the small uppercase labels and figure columns. It is no
+                      longer a monospace face, so .font-mono-ui turns on
+                      tabular figures below — that is the only thing the mono
+                      was really doing for the numbers, and Instrument Sans
+                      keeps the labels in one voice.
+     --font-*-auth    /login and /change-password ask for these by name in
+                      their own scoped CSS. Pointing them here rebrands both
+                      pages without touching that CSS. */
+:root {
+  --font-mono-ui: var(--font-mono);
+  --font-display-auth: var(--font-display);
+  --font-mono-auth: var(--font-body);
+}
+
+/* The mono face is gone, so ask for lining tabular figures explicitly —
+   otherwise the score columns down the track and the stat rails go ragged. */
+.font-mono-ui {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+@layer base {
+  body {
+    /* Warm paper and ink, so a page that never opts into .air-scope still
+       lands on the brand rather than Tailwind's cool grey. */
+    @apply antialiased;
+    background-color: #FBF9F8;
+    color: #1E1520;
+    font-family: var(--font-body), system-ui, -apple-system, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display), var(--font-body), system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors;
+  }
+
+  .card {
+    @apply bg-white rounded-xl shadow-sm ring-1 ring-gray-200 p-6;
+  }
+
+  .input {
+    @apply block w-full rounded-lg border-0 py-2.5 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+}
+
+/* Audio wave animation */
+/* Coaching tip fade-in */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Border-left width utility */
+.border-l-3 {
+  border-left-width: 3px;
+}
+
+/* -- Floor theme: plum + amber on warm paper --------------------
+   Scoped to .air-scope. Every surface, rule and accent in the agent app reads
+   these tokens, which is why the whole product re-themes from this one block
+   without a single component being edited.
+
+   ONE THEME, NOT TWO. This used to carry a midnight-blue console palette plus
+   a warm-brown bright variant behind data-theme="light". The brand is a single
+   light scheme now, so the second set — and the toggle that drove it — are
+   gone. Bringing dark back means adding a `[data-theme='dark']` block here and
+   nothing else.
+
+   Values are space-separated RGB channels, not hex, so Tailwind's opacity
+   modifiers keep working: `bg-air-signal/10`, `border-air-line/25`.
+
+   --air-line is the plum, not the finished border colour. Borders are drawn as
+   plum at low alpha, which lands on the specified #E4DCE6 / #F0EAF1 over paper
+   and stays correct over a white panel too — a fixed hex could only be right
+   on one of them. */
+.air-scope {
+  --air-bg: 251 249 248;         /* --paper    #FBF9F8 */
+  --air-bg2: 244 239 244;        /* --paper-2  #F4EFF4 */
+  --air-panel: 255 255 255;      /* --surface  #FFFFFF */
+  --air-line: 90 58 102;         /* --plum-3, drawn at --air-line-a */
+  --air-line2: 90 58 102;
+  --air-signal: 46 27 51;        /* --plum     #2E1B33  (primary action) */
+  --air-signal-bright: 90 58 102;/* --plum-3   #5A3A66  (hover / lift) */
+  --air-cyan: 90 58 102;         /* secondary link, same family as signal */
+  --air-live: 179 38 30;         /* --error    #B3261E */
+  --air-amber: 222 138 36;       /* --amber    #DE8A24 */
+  /* Success has no token in the brand palette. A moss green keeps "passed"
+     readable as its own state while staying inside a warm scheme — a cool
+     forest green reads as a sticker stuck on the page. */
+  --air-mint: 64 107 75;
+  --air-text: 30 21 32;          /* --ink      #1E1520 */
+  --air-muted: 74 61 80;         /* --ink-2    #4A3D50 */
+  --air-faint: 110 102 116;      /* --muted    #6E6674 */
+
+  /* Brand values that are used as literal colours rather than alpha bases. */
+  --plum: #2E1B33;
+  --plum-2: #40284A;
+  --plum-3: #5A3A66;
+  --amber: #DE8A24;
+  --amber-soft: #FBEEDA;
+  --amber-line: #EFDCBE;
+  --amber-deep: #8F5410;
+  --on-dark: #F6F1F7;
+  --on-dark-2: #C6B6CB;
+  --on-dark-3: #9C8CA3;
+  --field: #8E8095;
+  --field-hover: #6E6478;
+  --placeholder: #7A7080;
+
+  --air-panel-a: 1;
+  --air-line-a: 0.17;
+  --air-line2-a: 0.3;
+  --air-grid-a: 0.05;
+  --air-shadow: 0 18px 40px -28px rgba(46, 27, 51, 0.3);
+  --air-shadow-lg: 0 34px 70px -30px rgba(46, 27, 51, 0.28);
+}
+
+/* Surface + hairline helpers. Every card in the dashboard uses these instead
+   of a hardcoded rgba(), which is what lets one attribute flip the theme.
+
+   These MUST live in @layer components, not as bare rules. Tailwind emits
+   components before utilities, so a card can still override the default
+   hairline with an accent � `air-panel border-air-mint/30` on a cleared
+   station. As a bare rule after @tailwind utilities, .air-panel would win the
+   cascade instead and every accent border would silently flatten. */
+@layer components {
+  .air-panel {
+    background: rgb(var(--air-panel) / var(--air-panel-a));
+    border-color: rgb(var(--air-line) / var(--air-line-a));
+    box-shadow: var(--air-shadow);
+  }
+  .air-hairline {
+    border-color: rgb(var(--air-line) / var(--air-line-a));
+  }
+
+  /* -- Training-floor surfaces ------------------------------
+     The floor layout needs three surface roles the console tokens never had
+     a name for: the sidebar's chrome, a sunken inset for chips and table
+     headers, and a rule lighter than the panel hairline for rows inside a
+     card that is already outlined.
+
+     All three are the SAME ink (--air-line) at different alphas over the page
+     background rather than three new colours. That is what keeps them correct
+     in both themes without a per-theme branch: in the dark theme the wash
+     lifts a surface out of the background, and in the bright theme the same
+     wash settles it into the warm paper. Hard-coding the mock's #F2ECE1 and
+     #F4EFE5 would have looked right in bright mode and turned the sidebar into
+     a pale slab in dark mode. */
+  /* The navigation rail is the brand's plum surface. Rather than restyling
+     every child, it re-points the ink tokens for its own subtree — so the
+     links, labels, badges and dividers already written against --air-text /
+     --air-muted / --air-line simply resolve light-on-plum instead of
+     dark-on-paper, and amber takes over as the accent because plum on plum
+     would disappear. No component inside the rail changed. */
+  .floor-chrome {
+    background: var(--plum);
+    border-color: rgb(246 241 247 / 0.12);
+
+    --air-text: 246 241 247;          /* --on-dark */
+    --air-muted: 198 182 203;         /* --on-dark-2 */
+    --air-faint: 156 140 163;         /* --on-dark-3 */
+    --air-line: 246 241 247;
+    --air-line-a: 0.14;
+    --air-panel: 246 241 247;
+    --air-panel-a: 0.09;
+    --air-signal: 222 138 36;         /* --amber */
+    --air-signal-bright: 222 138 36;
+    --air-shadow: none;
+  }
+  .floor-sunken {
+    background: rgb(var(--air-line) / 0.07);
+  }
+  .floor-rule {
+    border-color: rgb(var(--air-line) / calc(var(--air-line-a) * 0.55));
+  }
+
+  /* Pop-ups escape their surface. Both account menus are children of a plum
+     rail or a paper topbar, so they reset the ink tokens to the page values
+     and read the same wherever they are opened from. */
+  .air-scope [role='menu'] {
+    --air-text: 30 21 32;
+    --air-muted: 74 61 80;
+    --air-faint: 110 102 116;
+    --air-line: 90 58 102;
+    --air-line-a: 0.17;
+    --air-panel: 255 255 255;
+    --air-panel-a: 1;
+    --air-signal: 46 27 51;
+    --air-signal-bright: 90 58 102;
+    --air-shadow: 0 18px 40px -28px rgba(46, 27, 51, 0.3);
+  }
+}
+
+/* -- Legacy light content remap ----------------------------
+   Pages migrated into the shell still use the app's original light Tailwind
+   palette (gray/white cards, primary buttons, pastel chips). Rather than
+   rewriting every surface in every page to air tokens, the shared shell
+   remaps those classes to the active theme's tokens here � for both the
+   shell's own markup and the migrated page content.
+
+   Dark is the shell's default; most of these rules live under
+   .air-scope so the migrated pages join the one theme rather than keeping their own
+   warm-white surfaces, which already harmonise with the light shell. Un-
+   layered rules beat Tailwind's layered utilities by cascade, and every
+   selector carries .air-scope so nothing leaks outside the shell. */
+
+/* Surfaces */
+.air-scope .card {
+  background: rgb(var(--air-panel) / var(--air-panel-a));
+  border-color: rgb(var(--air-line) / var(--air-line-a));
+  box-shadow: var(--air-shadow);
+  --tw-ring-color: rgb(var(--air-line) / 0.14);
+}
+.air-scope .bg-white { background-color: rgb(var(--air-panel)); }
+.air-scope .bg-gray-50 { background-color: rgb(var(--air-bg2)); }
+.air-scope .bg-gray-100 { background-color: rgb(var(--air-line) / 0.10); }
+.air-scope .bg-gray-200 { background-color: rgb(var(--air-line) / 0.18); }
+.air-scope .bg-gray-300 { background-color: rgb(var(--air-line) / 0.28); }
+.air-scope .bg-gray-800, .air-scope .bg-gray-900 { background-color: rgb(var(--air-bg2)); }
+
+/* Neutrals */
+.air-scope .text-gray-900,
+.air-scope .text-gray-800 { color: rgb(var(--air-text)); }
+.air-scope .text-gray-700,
+.air-scope .text-gray-600,
+.air-scope .text-gray-500 { color: rgb(var(--air-muted)); }
+.air-scope .text-gray-400,
+.air-scope .text-gray-300 { color: rgb(var(--air-faint)); }
+.air-scope .border-gray-100,
+.air-scope .border-gray-200,
+.air-scope .border-gray-300 { border-color: rgb(var(--air-line) / 0.14); }
+.air-scope .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: rgb(var(--air-line) / 0.14); }
+.air-scope .ring-gray-200,
+.air-scope .ring-gray-300 { --tw-ring-color: rgb(var(--air-line) / 0.22); }
+
+/* Primary (CallSim blue) -> signal accent */
+.air-scope .text-primary-600,
+.air-scope .text-primary-700 { color: rgb(var(--air-signal-bright)); }
+.air-scope .text-primary-900 { color: rgb(var(--air-text)); }
+.air-scope .text-primary-100,
+.air-scope .text-primary-200 { color: rgb(var(--air-signal-bright)); }
+.air-scope .bg-primary-50 { background-color: rgb(var(--air-signal) / 0.12); }
+.air-scope .bg-primary-100 { background-color: rgb(var(--air-signal) / 0.20); }
+.air-scope .border-primary-200 { border-color: rgb(var(--air-signal) / 0.30); }
+.air-scope .border-primary-400 { border-color: rgb(var(--air-signal) / 0.60); }
+.air-scope .ring-primary-500 { --tw-ring-color: rgb(var(--air-signal)); }
+
+/* Semantic tints: banners (50), chips (100) and their text/border accents */
+.air-scope .bg-blue-50 { background-color: rgb(var(--air-cyan) / 0.10); }
+.air-scope .bg-blue-100 { background-color: rgb(var(--air-cyan) / 0.16); }
+.air-scope .text-blue-500,
+.air-scope .text-blue-600,
+.air-scope .text-blue-700,
+.air-scope .text-blue-900 { color: rgb(var(--air-cyan)); }
+.air-scope .border-blue-300 { border-color: rgb(var(--air-cyan) / 0.45); }
+
+.air-scope .bg-green-50 { background-color: rgb(var(--air-mint) / 0.10); }
+.air-scope .bg-green-100 { background-color: rgb(var(--air-mint) / 0.16); }
+.air-scope .text-green-700,
+.air-scope .text-green-900 { color: rgb(var(--air-mint)); }
+
+.air-scope .bg-red-50 { background-color: rgb(var(--air-live) / 0.10); }
+.air-scope .bg-red-100 { background-color: rgb(var(--air-live) / 0.16); }
+.air-scope .text-red-500,
+.air-scope .text-red-600,
+.air-scope .text-red-700,
+.air-scope .text-red-800,
+.air-scope .text-red-900 { color: rgb(var(--air-live)); }
+.air-scope .border-red-200 { border-color: rgb(var(--air-live) / 0.30); }
+
+.air-scope .bg-amber-50 { background-color: rgb(var(--air-amber) / 0.10); }
+.air-scope .bg-amber-100 { background-color: rgb(var(--air-amber) / 0.16); }
+.air-scope .text-amber-600,
+.air-scope .text-amber-700,
+.air-scope .text-amber-800,
+.air-scope .text-amber-900,
+.air-scope .text-amber-950 { color: rgb(var(--air-amber)); }
+
+.air-scope .bg-yellow-50 { background-color: rgb(var(--air-amber) / 0.12); }
+.air-scope .bg-yellow-100 { background-color: rgb(var(--air-amber) / 0.16); }
+.air-scope .text-yellow-700 { color: rgb(var(--air-amber)); }
+
+.air-scope .bg-teal-50 { background-color: rgb(var(--air-cyan) / 0.10); }
+.air-scope .bg-teal-100 { background-color: rgb(var(--air-cyan) / 0.16); }
+.air-scope .text-teal-100,
+.air-scope .text-teal-200,
+.air-scope .text-teal-500,
+.air-scope .text-teal-600,
+.air-scope .text-teal-700,
+.air-scope .text-teal-800,
+.air-scope .text-teal-900 { color: rgb(var(--air-cyan)); }
+.air-scope .border-teal-200,
+.air-scope .border-teal-300 { border-color: rgb(var(--air-cyan) / 0.35); }
+.air-scope .ring-teal-100,
+.air-scope .ring-teal-200 { --tw-ring-color: rgb(var(--air-cyan) / 0.35); }
+
+.air-scope .bg-sky-50 { background-color: rgb(var(--air-signal) / 0.10); }
+.air-scope .bg-sky-100 { background-color: rgb(var(--air-signal) / 0.16); }
+.air-scope .text-sky-600,
+.air-scope .text-sky-700,
+.air-scope .text-sky-800 { color: rgb(var(--air-signal-bright)); }
+
+.air-scope .bg-violet-50 { background-color: rgb(var(--air-signal) / 0.10); }
+.air-scope .bg-violet-100 { background-color: rgb(var(--air-signal) / 0.16); }
+.air-scope .text-violet-500,
+.air-scope .text-violet-600,
+.air-scope .text-violet-700,
+.air-scope .text-violet-800,
+.air-scope .text-violet-900 { color: rgb(var(--air-signal-bright)); }
+.air-scope .border-violet-300 { border-color: rgb(var(--air-signal) / 0.45); }
+
+.air-scope .bg-indigo-50 { background-color: rgb(var(--air-signal) / 0.10); }
+.air-scope .bg-indigo-100 { background-color: rgb(var(--air-signal) / 0.16); }
+.air-scope .text-indigo-600,
+.air-scope .text-indigo-700,
+.air-scope .text-indigo-800 { color: rgb(var(--air-signal-bright)); }
+
+.air-scope .bg-purple-100 { background-color: rgb(var(--air-signal) / 0.16); }
+.air-scope .text-purple-600,
+.air-scope .text-purple-700 { color: rgb(var(--air-signal-bright)); }
+
+.air-scope .bg-rose-50 { background-color: rgb(var(--air-live) / 0.10); }
+.air-scope .bg-rose-100 { background-color: rgb(var(--air-live) / 0.16); }
+.air-scope .text-rose-500,
+.air-scope .text-rose-600,
+.air-scope .text-rose-700,
+.air-scope .text-rose-800,
+.air-scope .text-rose-900 { color: rgb(var(--air-live)); }
+.air-scope .border-rose-300 { border-color: rgb(var(--air-live) / 0.45); }
+
+.air-scope .bg-emerald-50 { background-color: rgb(var(--air-mint) / 0.10); }
+.air-scope .bg-emerald-100 { background-color: rgb(var(--air-mint) / 0.16); }
+.air-scope .text-emerald-600,
+.air-scope .text-emerald-700,
+.air-scope .text-emerald-800 { color: rgb(var(--air-mint)); }
+.air-scope .ring-emerald-200 { --tw-ring-color: rgb(var(--air-mint) / 0.35); }
+
+.air-scope .bg-amber-400 { background-color: rgb(var(--air-amber)); }
+.air-scope .text-amber-300 { color: rgb(var(--air-amber)); }
+.air-scope .ring-amber-200 { --tw-ring-color: rgb(var(--air-amber) / 0.35); }
+.air-scope .ring-red-200 { --tw-ring-color: rgb(var(--air-live) / 0.35); }
+
+/* Interactive chrome shared by both themes */
+.air-scope .btn-primary {
+  background-image: linear-gradient(135deg, rgb(var(--air-signal)), rgb(var(--air-signal-bright)));
+  color: #ffffff;
+  box-shadow: 0 8px 24px -10px rgb(var(--air-signal) / 0.55);
+}
+.air-scope .btn-primary:hover {
+  background-image: linear-gradient(135deg, rgb(var(--air-signal-bright)), rgb(var(--air-cyan)));
+}
+.air-scope .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.air-scope .btn-secondary {
+  background: rgb(var(--air-panel) / var(--air-panel-a));
+  color: rgb(var(--air-text));
+  --tw-ring-color: rgb(var(--air-line) / 0.35);
+}
+.air-scope .btn-secondary:hover {
+  background: rgb(var(--air-line) / 0.10);
+}
+.air-scope .input {
+  background-color: rgb(var(--air-bg2));
+  color: rgb(var(--air-text));
+  --tw-ring-color: rgb(var(--air-line) / 0.30);
+}
+.air-scope .input::placeholder {
+  color: rgb(var(--air-faint));
+}
+
+/* The dashboard is animation-heavy (pulsing node, waveform, blinking
+   indicators); honour a reduced-motion preference by stopping all of it. */
+@media (prefers-reduced-motion: reduce) {
+  .air-scope *,
+  .air-scope *::before,
+  .air-scope *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Best Practice Clips: admin-matched warm coffee/cream theme.
+   Scoped to .bean-scope so the page can carry a little more warmth than the
+   rest of the floor while drawing from the same plum + amber palette. */
+.bean-scope {
+  --bean-bg: 251 249 248;      /* --paper */
+  --bean-bg-2: 255 255 255;    /* --surface */
+  --bean-card: 255 255 255;
+  --bean-card-2: 244 239 244;  /* --paper-2 */
+  --bean-line: 90 58 102;      /* --plum-3, used with alpha */
+  --bean-line-2: 90 58 102;
+  --bean-ink: 30 21 32;        /* --ink */
+  --bean-muted: 74 61 80;      /* --ink-2 */
+  --bean-faint: 110 102 116;   /* --muted */
+  --bean-brand: 46 27 51;      /* --plum */
+  --bean-brand-bright: 90 58 102;
+  --bean-brand-deep: 64 40 74; /* --plum-2 */
+  --bean-gold: 222 138 36;     /* --amber */
+  --bean-live: 179 38 30;      /* --error */
+
+  --bean-card-a: 1;
+  --bean-grid-a: 0.05;
+  --bean-wave-idle: rgba(90, 58, 102, 0.18);
+  --bean-shadow: 0 20px 46px -30px rgba(46, 27, 51, 0.3);
+  --bean-glow: rgba(46, 27, 51, 0.18);
+
+  /* Per-clip accents. Drawn from the plum/amber family so a long list of
+     sections still reads as one palette rather than a colour wheel. */
+  --clip-acc-1: 46 27 51;
+  --clip-acc-2: 222 138 36;
+  --clip-acc-3: 143 84 16;
+  --clip-acc-4: 90 58 102;
+  --clip-acc-5: 64 40 74;
+  --clip-acc-6: 64 107 75;
+}
+
+
+@layer components {
+  .bean-card {
+    background: rgb(var(--bean-card) / var(--bean-card-a));
+    border-color: rgb(var(--bean-line) / var(--bean-line-a, 1));
+    box-shadow: var(--bean-shadow);
+  }
+}
+
+.bean-scope .bean-card {
+  border-color: rgb(var(--bean-line));
+}
+
+.bean-glow {
+  background:
+    radial-gradient(680px 420px at 12% -5%, var(--bean-glow), transparent 60%),
+    radial-gradient(560px 400px at 100% 0%, rgb(var(--bean-brand-deep) / 0.12), transparent 55%),
+    radial-gradient(700px 500px at 80% 100%, rgb(var(--bean-live) / 0.07), transparent 60%);
+}
+
+.bean-grid {
+  background-image:
+    linear-gradient(rgb(var(--bean-brand) / var(--bean-grid-a)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--bean-brand) / var(--bean-grid-a)) 1px, transparent 1px);
+  background-size: 52px 52px;
+  -webkit-mask-image: radial-gradient(circle at 50% 12%, #000 45%, transparent 88%);
+  mask-image: radial-gradient(circle at 50% 12%, #000 45%, transparent 88%);
+}
+
+/* Scroll box inside a bean card (clip transcripts) � the thumb only shows
+   itself once there is something to scroll. */
+.bean-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--bean-line-2)) transparent;
+}
+.bean-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.bean-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.bean-scroll::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--bean-line-2));
+  border-radius: 999px;
+}
+.bean-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--bean-brand) / 0.55);
+}
+
+.bean-scope :focus-visible {
+  outline: 2px solid rgb(var(--bean-brand));
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bean-scope *,
+  .bean-scope *::before,
+  .bean-scope *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Keyboard focus. The browser default ring is low-contrast on both the near
+   black and the warm white, so the console draws its own in the active theme's
+   accent. :focus-visible only � mouse clicks stay clean. */
+.air-scope :focus-visible {
+  outline: 2px solid rgb(var(--air-signal-bright));
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+/* Progress ring. A conic-gradient sweep driven by --p (0-100), with the
+   centre punched out by an inset disc � no SVG and no extra dependency. */
+.air-ring {
+  background: conic-gradient(
+    from -90deg,
+    rgb(var(--air-signal)) calc(var(--p) * 1%),
+    rgb(var(--air-line) / 0.18) 0
+  );
+}
+.air-ring::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border-radius: 9999px;
+  background: rgb(var(--air-bg2));
+  box-shadow: inset 0 0 14px rgb(var(--air-signal) / 0.25);
+}
+
+/* -- Study cards: the "book" open ------------------------------
+   Each study card is a closed book. The cover swings open on its left-hand
+   spine to reveal the inside page beneath it.
+
+   The cover is a real element stacked above the inside page, not a filter or
+   an overlay, so the text on the inside page stays selectable and readable to
+   a screen reader whether the book is open or shut. `backface-visibility` is
+   what stops the cover's reversed text showing through once it passes 90deg.
+
+   Reduced motion is handled by the blanket rule above, which drops the
+   transition � the book still opens on hover, it just doesn't animate. */
+.air-scope .book {
+  perspective: 1600px;
+}
+.air-scope .book-cover {
+  transform-origin: left center;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transition: transform 0.62s cubic-bezier(0.2, 0.8, 0.22, 1), box-shadow 0.62s ease;
+  /* Opaque, deliberately. The cover is stacked directly over the inside page;
+     at the translucent panel alpha the page underneath showed through as a
+     blurred smear behind the cover's own text, which is what made the copy
+     hard to read. A book cover is not see-through. */
+  background: rgb(var(--air-bg2));
+}
+.air-scope .book:hover .book-cover,
+.air-scope .book:focus-visible .book-cover {
+  transform: rotateY(-115deg);
+  box-shadow: 24px 0 48px -18px rgba(0, 0, 0, 0.55);
+}
+/* The paper edge the cover pivots on. */
+.air-scope .book-spine {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--air-amber) / 0.55),
+    rgb(var(--air-amber) / 0.12) 60%,
+    transparent
+  );
+}
+/* Entrance for the floor's cards.
+   A short rise, staggered by the caller through `animation-delay`. `both` fill
+   mode matters: without it a card with a 200ms delay paints at full opacity for
+   those 200ms and then jumps back to the start of the animation. The
+   prefers-reduced-motion block above disables this along with everything else
+   in `.air-scope`, and because the end state is the natural one, disabling it
+   leaves the card correctly placed rather than stuck at opacity 0. */
+@keyframes floor-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.air-scope .floor-rise {
+  animation: floor-rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+
+
+/* Scrollbar styling */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #d1d5db;
+  border-radius: 3px;
+}
+
+/* Print / PDF export styles */
+@media print {
+  body { background: white !important; }
+  aside, .print\:hidden, nav, button { display: none !important; }
+  main { margin-left: 0 !important; padding: 1rem !important; }
+  .card { box-shadow: none !important; ring: none !important; border: 1px solid #e5e7eb !important; break-inside: avoid; }
+  .badge { border: 1px solid currentColor !important; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+
+/* -- Product knowledge guides: the "signal board" --------------
+   Two hues do the work � coffee brown for structure, honey gold for energy.
+   Scoped to .pk-guide so nothing here reaches the rest of the app.
+
+   One palette, every guide: ACA and Medicare are a matched pair, so the
+   tokens are named for the design (pk = product knowledge) rather than for
+   the product that was drawn first. GuideKit renders the .pk-guide wrapper,
+   so a new guide inherits all of this by being built on the kit.
+
+   The app's BRIGHT theme is already warm cream and brown, so these light
+   values are the reference design almost exactly. Dark is not a tinted copy
+   of it: on the midnight console, coffee brown turns to mud, so the structural
+   hue resolves to the console's own panel/line tokens and gold stays as the
+   single accent � which reads correctly against blue. Every variable name is
+   the same in both, so no component needs a per-theme branch. */
+/* -- Product knowledge guides: the "signal board" --------------
+   Plum for structure, amber for energy. Scoped to .pk-guide so nothing here
+   reaches the rest of the app. GuideKit renders the .pk-guide wrapper, so a
+   new guide inherits all of this by being built on the kit.
+
+   One palette, every guide: ACA and Medicare are a matched pair, so the tokens
+   are named for the design (pk = product knowledge) rather than for whichever
+   product was drawn first.
+
+   The feature bands are the page's anchor and stay dark — they are now plum
+   rather than midnight blue, with the --on-dark text tokens over them. */
+.pk-guide {
+  --pk-gold: 222 138 36;                 /* --amber */
+  --pk-gold-soft: #FBEEDA;               /* --amber-soft */
+  --pk-gold-line: #EFDCBE;               /* --amber-line */
+  --pk-brand: 46 27 51;                  /* --plum */
+  --pk-brand-soft: #F4EFF4;              /* --paper-2 */
+  --pk-brand-line: #E4DCE6;              /* --line */
+  --pk-ok: 64 107 75;
+  --pk-ok-soft: #E9F0EA;
+  --pk-stop: 179 38 30;                  /* --error */
+  --pk-stop-soft: #F8E5E3;
+  --pk-rust: 143 84 16;                  /* --amber-deep */
+  --pk-rust-soft: linear-gradient(180deg, #FBEEDA, #FFFFFF);
+  --pk-rust-line: #EFDCBE;
+  --pk-band: radial-gradient(130% 150% at 0% 0%, #5A3A66 0%, #40284A 58%, #2E1B33 100%);
+  --pk-hero: radial-gradient(120% 130% at 100% 0%, #5A3A66 0%, #40284A 55%, #2E1B33 100%);
+  --pk-band-ink: #F6F1F7;                /* --on-dark */
+  --pk-band-sub: #C6B6CB;                /* --on-dark-2 */
+  --pk-band-gold: #DE8A24;               /* --amber */
+}
+
+/* The "always open" dot breathes rather than blinks. */
+@keyframes pk-pulse {
+  0% { box-shadow: 0 0 0 0 rgb(var(--pk-gold) / 0.45); }
+  70% { box-shadow: 0 0 0 7px rgb(var(--pk-gold) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--pk-gold) / 0); }
+}
+.pk-pulse { animation: pk-pulse 2.4s infinite; }
+
+
+/* ── Signup flow ─────────────────────────────────────────────────
+   The three-step approval signup, rendered both inside the landing
+   page's modal and on the sign-in page. Those two pages have their own
+   scoped palettes, so everything here is written against literal brand
+   values rather than either page's tokens — otherwise the component
+   would take the colours of whichever page happened to host it. */
+.su { display: grid; gap: 18px; }
+
+.su-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #7A7080;
+}
+.su-steps li { display: inline-flex; align-items: center; gap: 7px; }
+.su-steps li + li::before { content: ""; width: 14px; height: 1px; background: #E4DCE6; }
+.su-steps li span {
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1px solid #E4DCE6;
+  font-size: 10.5px; font-weight: 700;
+}
+.su-steps li.on { color: #2E1B33; }
+.su-steps li.on span { background: #DE8A24; border-color: #DE8A24; color: #2E1B33; }
+.su-steps li.past span { background: #F4EFF4; border-color: #E4DCE6; color: #6E6674; }
+
+.su form { display: grid; gap: 14px; }
+.su-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.su label {
+  display: grid; gap: 6px;
+  font-size: 12.5px; font-weight: 600; color: #4A3D50;
+}
+.su input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #E4DCE6;
+  border-radius: 11px;
+  background: #FFFFFF;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  color: #1E1520;
+}
+.su input::placeholder { color: #7A7080; }
+.su input:focus {
+  outline: none;
+  border-color: #5A3A66;
+  box-shadow: 0 0 0 3px rgba(90, 58, 102, .12);
+}
+
+/* The code is short and read off an email, so it gets room to breathe. */
+.su-code {
+  font-size: 24px !important;
+  font-weight: 700;
+  letter-spacing: .38em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.su-hint { margin: -4px 0 0; font-size: 12.5px; line-height: 1.5; color: #6E6674; }
+
+.su-btn {
+  width: 100%;
+  padding: 13px 22px;
+  border: none;
+  border-radius: 999px;
+  background: #DE8A24;
+  color: #2E1B33;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity .16s ease;
+}
+.su-btn:hover { opacity: .92; }
+.su-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.su-links { display: flex; gap: 18px; }
+.su-links button {
+  border: none; background: none; padding: 0;
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  color: #5A3A66; cursor: pointer; text-decoration: underline;
+}
+.su-links button:disabled { opacity: .5; cursor: not-allowed; }
+
+.su-error, .su-note {
+  margin: 0;
+  padding: 10px 13px;
+  border-radius: 10px;
+  font-size: 13.5px;
+}
+.su-error { background: rgba(179, 38, 30, .07); border: 1px solid rgba(179, 38, 30, .26); color: #B3261E; }
+.su-note { background: rgba(90, 58, 102, .07); border: 1px solid rgba(90, 58, 102, .2); color: #4A3D50; }
+
+.su-done { text-align: center; display: grid; gap: 14px; justify-items: center; }
+.su-tick {
+  width: 46px; height: 46px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: rgba(64, 107, 75, .12);
+  color: #406B4B;
+  font-size: 22px; font-weight: 700;
+}
+.su-done h3 { margin: 0; font-size: 20px; font-weight: 700; color: #1E1520; }
+.su-done p { margin: 0; max-width: 42ch; font-size: 14.5px; line-height: 1.6; color: #4A3D50; }
+.su-done .su-btn { width: auto; padding-inline: 30px; }
+
+@media (max-width: 520px) {
+  .su-two { grid-template-columns: 1fr; }
+}
