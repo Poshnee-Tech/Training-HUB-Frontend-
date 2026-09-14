@@ -40,7 +40,6 @@ export function getCampaignColor(campaign: string): string {
   switch (campaign) {
     case 'ACA': return 'bg-blue-100 text-blue-800';
     case 'MEDICARE': return 'bg-purple-100 text-purple-800';
-    case 'MED_ALERT': return 'bg-orange-100 text-orange-800';
     default: return 'bg-gray-100 text-gray-800';
   }
 }

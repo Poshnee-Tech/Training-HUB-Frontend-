@@ -549,25 +549,17 @@ function CallPageInner() {
   }, [callIdParam, agentRole, token, sessionId, endSessionCommon, setStatus, resetSpeechTurn, stopRecording, stopBrowserStt, disconnect, router]);
 
   /**
-   * The text box is read-only while the customer is talking. `customerTurnActive`
-   * spans her whole server-declared turn (response started → playback drained),
-   * so typed text cannot land on the air as a barge-in mid-sentence, and it does
-   * not flicker during buffer gaps the way `isSpeaking` does.
+   * TYPED TURNS ARE GONE — the call is voice only.
+   *
+   * `handleTextSubmit` used to send whatever was in the box through `sendText`.
+   * It was the only way a typed character could reach the wire, and it was
+   * removed with the form and Send button below: a trainee who types is not
+   * practising the skill being trained, and a typed turn skips the endpointing
+   * and barge-in path every measurement assumes.
+   *
+   * `sendText` itself STAYS in use — `flushAgentSpeech` sends recognised SPEECH
+   * through the same `text_input` frame, so the transport is untouched.
    */
-  const inputLocked = status !== 'active' || customerTurnActive;
-  const handleTextSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (inputLocked) return;
-    if (textInput.trim()) {
-      clearEndpointTimer();
-      speechBufferRef.current = '';
-      sentTurnTextRef.current = textInput.trim();
-      responseStartedRef.current = false;
-      bufferVersionRef.current += 1;
-      sendText(textInput.trim());
-      setTextInput('');
-    }
-  };
 
   // Explicit start gesture — unlocks audio playback (browser autoplay policy
   // blocks it until a user interaction) and flips the gate so the connect
@@ -1090,8 +1082,16 @@ function CallPageInner() {
               <div ref={transcriptEndRef} />
             </div>
 
-            {/* Input row at bottom */}
-            <form onSubmit={handleTextSubmit} style={{
+            {/* ── SPEECH READOUT, NOT AN INPUT ──────────────────────────────
+                This call is VOICE ONLY. The box below is a live readout of what
+                the microphone heard (`speechBufferRef` → `setTextInput`), never
+                somewhere the trainee types: a fronter who can type is not
+                practising the skill the call exists to train, and typed turns
+                bypass the endpointing and barge-in behaviour the whole pipeline
+                is built around. It is `readOnly` with no `onChange`, there is no
+                form to submit and no Send button, so nothing here can reach
+                `sendText` — the speech path still does, from flushAgentSpeech. */}
+            <div style={{
               display: 'flex',
               gap: 8,
               padding: 10,
@@ -1101,7 +1101,10 @@ function CallPageInner() {
               <input
                 type="text"
                 value={textInput}
-                onChange={(e) => setTextInput(e.target.value)}
+                readOnly
+                tabIndex={-1}
+                aria-readonly="true"
+                aria-label="What your microphone heard"
                 placeholder={
                   status === 'completed'
                     ? 'This call has ended.'
@@ -1109,11 +1112,9 @@ function CallPageInner() {
                       ? 'Waiting for call to connect…'
                       : customerTurnActive
                         ? 'The customer is speaking — wait for your turn…'
-                        : 'Type a message (or speak into your microphone)…'
+                        : 'Speak into your microphone — this call is voice only.'
                 }
-                readOnly={customerTurnActive}
                 disabled={status !== 'active'}
-                aria-disabled={inputLocked}
                 style={{
                   flex: 1,
                   border: `1px solid ${VD.border}`,
@@ -1124,28 +1125,10 @@ function CallPageInner() {
                   outline: 'none',
                   background: customerTurnActive ? '#F3F4F6' : '#FFFFFF',
                   color: customerTurnActive ? '#6B7280' : undefined,
-                  cursor: customerTurnActive ? 'not-allowed' : undefined,
+                  cursor: 'default',
                 }}
               />
-              <button
-                type="submit"
-                disabled={inputLocked || !textInput.trim()}
-                style={{
-                  padding: '8px 18px',
-                  background: VD.logoBlue,
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: inputLocked || !textInput.trim() ? 'not-allowed' : 'pointer',
-                  opacity: inputLocked || !textInput.trim() ? 0.45 : 1,
-                  fontFamily: FONT,
-                }}
-              >
-                Send
-              </button>
-            </form>
+            </div>
           </div>
 
           {/* ── MIDDLE: verification checklist (dual-agent only) ── */}

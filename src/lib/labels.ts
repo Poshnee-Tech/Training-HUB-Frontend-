@@ -29,7 +29,6 @@
 const PRODUCT_LABELS: Record<string, string> = {
   ACA: 'ACA',
   MEDICARE: 'Medicare',
-  MED_ALERT: 'Medical Alert',
 };
 
 export function productLabel(campaign?: string | null): string {

@@ -12,7 +12,6 @@ function campaignChip(campaign?: string) {
   switch (campaign) {
     case 'ACA': return 'border-air-signal/35 bg-air-signal/10 text-air-signal-bright';
     case 'MEDICARE': return 'border-air-amber/40 bg-air-amber/12 text-air-amber';
-    case 'MED_ALERT': return 'border-air-live/35 bg-air-live/10 text-air-live';
     default: return 'border-air-line/30 bg-air-line/10 text-air-muted';
   }
 }
@@ -172,7 +171,6 @@ export default function ReportsPage() {
                 <option value="">All</option>
                 <option value="ACA">ACA</option>
                 <option value="MEDICARE">Medicare</option>
-                <option value="MED_ALERT">Medical Alert</option>
               </select>
             </label>
             <label className="block">
