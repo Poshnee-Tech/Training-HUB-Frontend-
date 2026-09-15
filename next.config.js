@@ -3,6 +3,22 @@
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:4000';
 
+// ── THE SOCKET ORIGIN IS DERIVED, NOT TRUSTED (2026-09-15) ──────────────────
+// connect-src took NEXT_PUBLIC_WS_URL verbatim, so a value set with https://
+// instead of wss:// whitelisted the wrong scheme and the browser blocked the
+// call socket outright — "violates the following Content Security Policy
+// directive" on every attempt, with the API itself perfectly healthy. The
+// wss/ws origin of the API is computed here so a mistyped variable can no
+// longer cost a working call, and both are listed.
+const socketOrigin = (() => {
+  try {
+    const u = new URL(apiUrl);
+    return `${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}`;
+  } catch {
+    return '';
+  }
+})();
+
 // `connect-src` is the load-bearing directive for this app — the agent screen
 // opens a WebSocket and POSTs to the backend API. Whitelist only those.
 //
@@ -32,7 +48,7 @@ const scriptSrc = isProd
 
 const csp = [
   "default-src 'self'",
-  `connect-src 'self' ${apiUrl} ${wsUrl} https://api.deepgram.com wss://api.deepgram.com`,
+  `connect-src 'self' ${apiUrl} ${wsUrl} ${socketOrigin} https://api.deepgram.com wss://api.deepgram.com`,
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
