@@ -4,12 +4,13 @@
  * Training Floor shell — agent/user portal chrome.
  *
  * The user portal now follows the same structural pattern as AdminSidebar:
- * - fixed 16rem left sidebar
+ * - fixed 16rem left sidebar at lg (1024px) and up; a drawer behind a menu
+ *   button in a slim top bar below that (see `mobileOpen` in FloorSidebar)
  * - 74px brand header
  * - grouped navigation
  * - active row with left signal marker
  * - account menu pinned to the bottom
- * - content offset by ml-64
+ * - content offset by lg:ml-64, and by the 56px top bar below lg
  *
  * Agent routes, nav counts, settings, sign-out, and active-route behavior are
  * preserved.
@@ -101,7 +102,7 @@ export default function TrainingFloorShell({
       <div className="air-scope min-h-screen bg-air-bg font-body text-air-text antialiased">
         <FloorSidebar />
 
-        <div className="ml-64 min-h-screen min-w-0">
+        <div className="min-h-screen min-w-0 pt-14 lg:ml-64 lg:pt-0">
           {children}
         </div>
       </div>
@@ -115,15 +116,76 @@ function FloorSidebar() {
   const pathname = usePathname();
   const { counts } = useNavCounts();
 
+  /**
+   * ── BELOW 1024px THE RAIL IS A DRAWER ─────────────────────────────────────
+   *
+   * The rail was on screen at every width and the content sat behind `ml-64`,
+   * so a trainee on a 390px phone got a 134px column for My Plan, Study and
+   * their call reports, with no way to put the rail away. Below `lg` it now
+   * slides in behind a menu button; at `lg` and up it is unchanged.
+   *
+   * Closed from the link that was tapped, so the chosen page is never left
+   * underneath an open drawer.
+   */
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    // The page behind must not scroll while the drawer is over it.
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [mobileOpen]);
+
   return (
+    <>
+    {/* Mobile top bar — the only chrome below lg. */}
+    <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-white/10 bg-[#2E1B33] px-3 text-[#FFF9F2] lg:hidden">
+      <button
+        type="button"
+        onClick={() => setMobileOpen(true)}
+        aria-label="Open navigation"
+        aria-controls="training-floor-sidebar"
+        aria-expanded={mobileOpen}
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors hover:bg-white/[0.06]"
+      >
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+        </svg>
+      </button>
+      <Link href="/dashboard" className="flex min-w-0 items-center gap-2.5">
+        <LogoTile className="h-8 w-8 shrink-0" radius={9} />
+        <span className="truncate font-display text-[15px] font-extrabold tracking-[-0.02em]">
+          Poshnee
+          <span className="ml-2 font-mono-ui text-[9px] font-semibold uppercase tracking-[0.16em] text-[#AE9FAF]">Training Hub</span>
+        </span>
+      </Link>
+    </header>
+
+    {mobileOpen && (
+      <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} aria-hidden />
+    )}
+
     <aside
       id="training-floor-sidebar"
-      className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r border-white/10 bg-[#2E1B33] text-[#FFF9F2] shadow-[12px_0_40px_-28px_rgba(20,10,24,0.65)]"
+      className={cn(
+        'fixed left-0 top-0 z-50 flex h-[100dvh] w-64 max-w-[85vw] flex-col border-r border-white/10 bg-[#2E1B33] text-[#FFF9F2] shadow-[12px_0_40px_-28px_rgba(20,10,24,0.65)] transition-transform duration-200 lg:z-40 lg:h-screen lg:max-w-none lg:translate-x-0',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+      )}
     >
       {/* Brand */}
+      <div className="flex h-[74px] shrink-0 items-center border-b border-white/10 pr-3">
       <Link
         href="/dashboard"
-        className="flex h-[74px] shrink-0 select-none items-center gap-3 border-b border-white/10 px-5"
+        onClick={() => setMobileOpen(false)}
+        className="flex h-full min-w-0 flex-1 select-none items-center gap-3 px-5"
       >
         <LogoTile className="h-10 w-10 shrink-0" radius={11} />
 
@@ -137,6 +199,17 @@ function FloorSidebar() {
           </span>
         </span>
       </Link>
+      <button
+        type="button"
+        onClick={() => setMobileOpen(false)}
+        aria-label="Close navigation"
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[#AE9FAF] transition-colors hover:bg-white/[0.06] hover:text-[#FFF9F2] lg:hidden"
+      >
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+      </div>
 
       {/* Navigation */}
       <nav
@@ -167,6 +240,7 @@ function FloorSidebar() {
                     key={item.href}
                     href={item.href}
                     aria-current={active ? 'page' : undefined}
+                    onClick={() => setMobileOpen(false)}
                     className={cn(
                       'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-semibold transition-colors',
                       active
@@ -214,6 +288,7 @@ function FloorSidebar() {
         <AgentMenu />
       </div>
     </aside>
+    </>
   );
 }
 

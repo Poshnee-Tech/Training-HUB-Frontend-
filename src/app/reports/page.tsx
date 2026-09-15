@@ -154,20 +154,20 @@ export default function ReportsPage() {
 
         {/* Filters */}
         <div className="air-panel mb-5 rounded-[18px] border p-3.5 backdrop-blur-md">
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="block">
+          <div className="grid grid-cols-2 items-end gap-3 sm:flex sm:flex-wrap">
+            <label className="col-span-2 block sm:col-span-1">
               <span className="mb-1.5 block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-faint">Search</span>
               <input
                 type="text"
                 placeholder="Scenario name..."
                 value={search}
                 onChange={(e) => applyFilter(setSearch, e.target.value)}
-                className="air-panel min-w-[210px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition placeholder:text-air-faint focus:border-air-signal/40"
+                className="air-panel w-full sm:w-auto sm:min-w-[210px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition placeholder:text-air-faint focus:border-air-signal/40"
               />
             </label>
             <label className="block">
               <span className="mb-1.5 block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-faint">Product</span>
-              <select value={campaign} onChange={(e) => applyFilter(setCampaign, e.target.value)} className="air-panel min-w-[160px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40">
+              <select value={campaign} onChange={(e) => applyFilter(setCampaign, e.target.value)} className="air-panel w-full sm:w-auto sm:min-w-[160px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40">
                 <option value="">All</option>
                 <option value="ACA">ACA</option>
                 <option value="MEDICARE">Medicare</option>
@@ -175,7 +175,7 @@ export default function ReportsPage() {
             </label>
             <label className="block">
               <span className="mb-1.5 block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-faint">Difficulty</span>
-              <select value={difficulty} onChange={(e) => applyFilter(setDifficulty, e.target.value)} className="air-panel min-w-[160px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40">
+              <select value={difficulty} onChange={(e) => applyFilter(setDifficulty, e.target.value)} className="air-panel w-full sm:w-auto sm:min-w-[160px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40">
                 <option value="">All</option>
                 <option value="EASY">Easy</option>
                 <option value="MEDIUM">Medium</option>
@@ -184,7 +184,7 @@ export default function ReportsPage() {
             </label>
             <label className="block">
               <span className="mb-1.5 block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-faint">Status</span>
-              <select value={status} onChange={(e) => applyFilter(setStatus, e.target.value)} className="air-panel min-w-[160px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40">
+              <select value={status} onChange={(e) => applyFilter(setStatus, e.target.value)} className="air-panel w-full sm:w-auto sm:min-w-[160px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40">
                 <option value="">All</option>
                 <option value="COMPLETED">Finished</option>
                 <option value="ACTIVE">On the call</option>
@@ -197,7 +197,7 @@ export default function ReportsPage() {
                 type="number" min="0" max="100" placeholder="0"
                 value={scoreMin}
                 onChange={(e) => applyFilter(setScoreMin, e.target.value)}
-                className="air-panel w-24 rounded-xl border bg-air-bg2 px-3 py-2.5 text-[13px] text-air-text outline-none transition placeholder:text-air-faint focus:border-air-signal/40"
+                className="air-panel w-full sm:w-24 rounded-xl border bg-air-bg2 px-3 py-2.5 text-[13px] text-air-text outline-none transition placeholder:text-air-faint focus:border-air-signal/40"
               />
             </label>
             <label className="block">
@@ -206,7 +206,7 @@ export default function ReportsPage() {
                 type="number" min="0" max="100" placeholder="100"
                 value={scoreMax}
                 onChange={(e) => applyFilter(setScoreMax, e.target.value)}
-                className="air-panel w-24 rounded-xl border bg-air-bg2 px-3 py-2.5 text-[13px] text-air-text outline-none transition placeholder:text-air-faint focus:border-air-signal/40"
+                className="air-panel w-full sm:w-24 rounded-xl border bg-air-bg2 px-3 py-2.5 text-[13px] text-air-text outline-none transition placeholder:text-air-faint focus:border-air-signal/40"
               />
             </label>
             {(campaign || difficulty || status || search || scoreMin || scoreMax) && (
@@ -216,7 +216,7 @@ export default function ReportsPage() {
                   setSearch(''); setScoreMin(''); setScoreMax('');
                   setPage(1);
                 }}
-                className="rounded-xl px-3 py-2.5 text-[12.5px] font-semibold text-air-muted transition hover:bg-air-line/[0.06] hover:text-air-signal-bright"
+                className="col-span-2 rounded-xl sm:col-span-1 px-3 py-2.5 text-[12.5px] font-semibold text-air-muted transition hover:bg-air-line/[0.06] hover:text-air-signal-bright"
               >
                 Clear filters
               </button>

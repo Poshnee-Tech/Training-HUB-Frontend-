@@ -613,7 +613,7 @@ function NowPlaying({ clip, sectionName, playing, position, duration, onToggle, 
      * (256px) column and every page is offset by the same amount, so the bar
      * starts where the content starts and ends where the content ends.
      */
-    <div className="pointer-events-none fixed bottom-0 left-64 right-0 z-[70]">
+    <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-[70] lg:left-64">
       <div className="mx-auto mb-3 w-full max-w-[1500px] px-6 lg:px-8">
         <div className="bean-card pointer-events-auto flex items-center gap-3 rounded-[16px] border px-4 py-3 backdrop-blur-xl">
           <span className="hidden shrink-0 items-center gap-2 rounded-lg border border-bean-live/40 bg-bean-live/[0.08] px-2.5 py-1.5 font-mono-ui text-[9px] font-bold tracking-[0.2em] text-bean-live sm:inline-flex">
