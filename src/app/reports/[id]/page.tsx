@@ -175,6 +175,62 @@ export default function ReportDetailPage() {
   const [pendingElapsedS, setPendingElapsedS] = useState(0);
   const [activeTab, setActiveTab] = useState<'evaluation' | 'transcript' | 'coaching'>('evaluation');
 
+  /**
+   * ── EXPORTING THE REPORT AS A PDF ────────────────────────────────────────
+   *
+   * "Export PDF" is `window.print()`, so the PDF is exactly whatever is in the
+   * DOM at that moment. That made it a poor record of the call in three ways,
+   * all of them silent — the file looked fine until you read it:
+   *
+   *   1. THE TABS ARE CONDITIONALLY RENDERED. Only the tab you were looking at
+   *      existed, so a PDF exported from the score tab contained no transcript
+   *      and no coaching, with nothing to say they were missing.
+   *   2. THE SCORECARD IS IN <details>. Collapsed elements print collapsed, so
+   *      the entire QA breakdown — every KPI, every piece of evidence — came
+   *      out as the single word "Scorecard evidence".
+   *   3. THE TRANSCRIPT SCROLLS INSIDE max-h-[600px]. A print takes the
+   *      element's visible box, so every call longer than about a screenful
+   *      was truncated mid-sentence with no indication anything followed.
+   *
+   * So printing is a mode, not just a stylesheet. `printing` puts every pane
+   * in the DOM; the effect below opens every <details> and restores them
+   * afterwards; and the print stylesheet in globals.css releases the scroll
+   * clamps. The screen is untouched by any of it.
+   */
+  const [printing, setPrinting] = useState(false);
+
+  useEffect(() => {
+    if (!printing) return;
+
+    // Runs after the render that put every pane on the page. `open` is an
+    // uncontrolled DOM property here, so it is set directly rather than
+    // threaded through props into each nested <details>.
+    const reopened = Array.from(document.querySelectorAll('details')).filter((d) => !d.open);
+    reopened.forEach((d) => { d.open = true; });
+
+    let done = false;
+    const restore = () => {
+      if (done) return;
+      done = true;
+      reopened.forEach((d) => { d.open = false; });
+      setPrinting(false);
+    };
+
+    window.addEventListener('afterprint', restore);
+    // Two frames: one for the re-render, one for the layout it causes. Calling
+    // print() in the same frame captures the page mid-reflow, which is how the
+    // export ended up with half-collapsed sections and clipped panels.
+    const frame = requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('afterprint', restore);
+      // Safari does not always fire afterprint; without this the page would
+      // stay in print mode with every tab stacked on screen.
+      restore();
+    };
+  }, [printing]);
+
   useEffect(() => { loadFromStorage(); }, [loadFromStorage]);
 
   /**
@@ -228,11 +284,17 @@ export default function ReportDetailPage() {
    */
   const attemptsRef = useRef(0);
 
-  const queueEvaluation = useCallback(async (replaceExisting: boolean) => {
+  /**
+   * Ask for a score for a call that has none.
+   *
+   * It took a `replaceExisting` flag until the Re-evaluate button moved to the
+   * admin portal; nothing passed `true` after that, so the flag and its
+   * "this will replace your report" confirmation are gone. This path is
+   * reachable only from the "Score this call" button, which renders only when
+   * `evaluation` is null — so it cannot overwrite a report that exists.
+   */
+  const queueEvaluation = useCallback(async () => {
     if (!token || !params.id || retrying) return;
-    if (replaceExisting && !window.confirm(
-      'Re-evaluating will replace the current report with a newly generated one. Continue?',
-    )) return;
 
     setRetrying(true);
     try {
@@ -489,21 +551,28 @@ export default function ReportDetailPage() {
             </button>
             {evaluation && (
               <div className="flex items-center gap-2 print:hidden">
-                {/* Re-scoring is a QA action: offered only to someone who can
-                    see what the score is made of. */}
-                {!detailWithheld && (
+                {/* ── RE-SCORING IS THE SUPERVISOR'S, NOT THE TRAINEE'S ──────
+                 *
+                 * A "Re-evaluate" button used to sit here. It replaced the
+                 * trainee's own report with a freshly generated one, which
+                 * means the person being marked could re-roll their own mark
+                 * until they liked it — and the old score was gone, so nobody
+                 * reviewing later could see that it had happened.
+                 *
+                 * It now lives in the admin portal on the call detail screen
+                 * (Admin/src/app/calls/[id]/page.tsx), where the people who
+                 * own QA can use it. The server enforces the same split, so
+                 * removing the button is not the whole guard: see
+                 * retryEvaluation in evaluations.controller.ts.
+                 *
+                 * "Score this call" further down is NOT this button and stays.
+                 * It only appears when the call has no evaluation at all — a
+                 * scoring job that failed — so it can create a first report
+                 * but can never replace one.
+                 */}
                 <button
                   type="button"
-                  onClick={() => void queueEvaluation(true)}
-                  disabled={retrying || scoringInProgress}
-                  className="btn-secondary rounded-xl border-gray-200 bg-white text-xs shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {retrying ? 'Starting…' : scoringInProgress ? 'Re-evaluating…' : 'Re-evaluate'}
-                </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => window.print()}
+                  onClick={() => setPrinting(true)}
                   className="btn-secondary flex items-center gap-1.5 rounded-xl border-gray-200 bg-white text-xs shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
                 >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -820,6 +889,7 @@ export default function ReportDetailPage() {
             accentClassification={accentClassification}
             token={token}
             sessionId={params.id as string}
+            printing={printing}
           />
         )}
 
@@ -906,7 +976,8 @@ export default function ReportDetailPage() {
         </div>
         )}
 
-        {activeTab === 'evaluation' && evaluation && !detailWithheld && (<>
+        {(activeTab === 'evaluation' || printing) && evaluation && !detailWithheld && (<>
+          {printing && <h2 className="print-section-title print-section-title--first">Score breakdown</h2>}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {/* Strengths */}
             <div className="card rounded-2xl border border-gray-200/80 bg-white shadow-sm transition-shadow hover:shadow-md">
@@ -1049,7 +1120,7 @@ export default function ReportDetailPage() {
          * "Evaluation is being processed"). It is now one panel driven by
          * `evaluationStatusCopy`, so every state is phrased the same way and
          * every state offers the trainee something to do. */}
-        {activeTab === 'evaluation' && !evaluation && (() => {
+        {(activeTab === 'evaluation' || printing) && !evaluation && (() => {
           const copy = evaluationStatusCopy(evalStatus);
           const needsAction = copy.tone === 'bad';
 
@@ -1099,7 +1170,7 @@ export default function ReportDetailPage() {
 
               {needsAction ? (
                 <button
-                  onClick={() => void queueEvaluation(false)}
+                  onClick={() => void queueEvaluation()}
                   disabled={retrying}
                   className="btn-primary mt-5"
                 >
@@ -1131,7 +1202,15 @@ export default function ReportDetailPage() {
           </div>
         )}
 
-        {(activeTab === 'transcript' || detailWithheld) && (
+        {(activeTab === 'transcript' || detailWithheld || printing) && (<>
+          {/* With the breakdown withheld there is no score pane, so the
+              transcript is the first thing printed and must not push itself
+              onto a second page. */}
+          {printing && (
+            <h2 className={cn('print-section-title', detailWithheld && 'print-section-title--first')}>
+              Call transcript
+            </h2>
+          )}
           <div className="card rounded-2xl border border-gray-200/80 bg-white shadow-sm transition-shadow hover:shadow-md">
             <div className="custom-scrollbar max-h-[600px] space-y-4 overflow-y-auto pr-1">
               {transcript.length === 0 ? (
@@ -1205,10 +1284,11 @@ export default function ReportDetailPage() {
               )}
             </div>
           </div>
-        )}
+        </>)}
 
         {/* Coaching Tips Tab */}
-        {activeTab === 'coaching' && (
+        {(activeTab === 'coaching' || printing) && (<>
+          {printing && <h2 className="print-section-title">Coaching tips</h2>}
           <div className="card rounded-2xl border border-gray-200/80 bg-white shadow-sm transition-shadow hover:shadow-md">
             <div className="space-y-3">
               {coachingTips.map((tip: any, i: number) => (
@@ -1235,7 +1315,7 @@ export default function ReportDetailPage() {
               )}
             </div>
           </div>
-        )}
+        </>)}
       </main>
     </TrainingFloorShell>
   );

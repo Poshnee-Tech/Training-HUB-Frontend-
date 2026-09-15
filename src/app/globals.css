@@ -606,14 +606,232 @@
   border-radius: 3px;
 }
 
-/* Print / PDF export styles */
+/* ── PRINT / PDF EXPORT ───────────────────────────────────────────────────
+ *
+ * "Export PDF" on a call report is window.print(), so this stylesheet IS the
+ * PDF. It used to be six declarations, and the exported report showed it:
+ * content clipped out of the file entirely, cards split across page breaks,
+ * headings stranded at the foot of a page, and a layout still shaped for a
+ * 1480px viewport squeezed onto a 186mm page.
+ *
+ * Three of those were not styling problems and are fixed in the report page
+ * itself (see the `printing` state in app/reports/[id]/page.tsx): only the
+ * open tab was in the DOM, the scorecard's <details> printed collapsed, and
+ * the transcript printed only its first scrollful. What is left is genuinely
+ * presentational, and lives here.
+ *
+ * Section titles for the stacked panes are `.print-section-title`, defined at
+ * the end of this block — they render on paper only.
+ */
+
+/* The page box. The margin here is the ONLY page margin: `main` is zeroed
+   below, because the app's own padding used to stack on top of the browser's
+   default and push content into a narrow ribbon down the middle. */
+@page {
+  size: A4 portrait;
+  margin: 14mm 12mm;
+}
+
 @media print {
-  body { background: white !important; }
-  aside, .print\:hidden, nav, button { display: none !important; }
-  main { margin-left: 0 !important; padding: 1rem !important; }
-  .card { box-shadow: none !important; ring: none !important; border: 1px solid #e5e7eb !important; break-inside: avoid; }
-  .badge { border: 1px solid currentColor !important; }
-  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  /* Colour is meaning in this report — the red/green "you said / a top
+     performer would say" pair, the score bands, the annotation tints — so
+     backgrounds are kept rather than dropped to save ink. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html, body {
+    background: #fff !important;
+    /* Screen sizes are tuned for a backlit display at arm's length. On paper
+       the same values read cramped, so the base is set in points and the rest
+       of the document, being in rem/em, follows it. */
+    font-size: 10.5pt;
+    line-height: 1.45;
+  }
+
+  /* Interface, not content. */
+  aside,
+  nav,
+  .print\:hidden,
+  button,
+  [role="tablist"],
+  .custom-scrollbar::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  /* <summary> is a control the browser renders as one, but here it carries the
+     section titles and scores inside the scorecard, so it has to survive the
+     rule above and lose only its disclosure triangle. */
+  summary {
+    display: block !important;
+    list-style: none !important;
+    cursor: auto !important;
+  }
+  summary::-webkit-details-marker,
+  summary::marker {
+    display: none !important;
+    content: "" !important;
+  }
+
+  /* The shell centres on a 1480px max width and pads for a sidebar. Both are
+     screen concerns; the @page margin is the paper's. */
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  /* ── SCROLL CLAMPS ─────────────────────────────────────────────────────
+     A print captures an element's VISIBLE box. Anything inside a fixed-height
+     scroller is therefore cut at that height and silently dropped from the
+     PDF — which is how a twenty-minute call exported as half a transcript.
+     Every clamp is released so the content flows onto as many pages as it
+     needs. The attribute selectors catch Tailwind's arbitrary-value classes
+     (max-h-[600px] and friends) without naming each one. */
+  .custom-scrollbar,
+  [class*="max-h-"],
+  [class*="overflow-y-auto"],
+  [class*="overflow-auto"],
+  [class*="overflow-hidden"] {
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Depth effects do not survive the trip to paper: shadows print as grey
+     haze, and ring-offset draws a white gap that looks like a printing fault.
+     Borders do the same job in ink. */
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .card {
+    border: 1px solid #d4d4d8 !important;
+    border-radius: 6px !important;
+  }
+
+  /* ── PAGINATION ────────────────────────────────────────────────────────
+     Two different needs, and applying one rule to both is what produced the
+     half-empty pages. SMALL, self-contained units must not be split. LARGE
+     containers must be allowed to split, or the whole block jumps to a fresh
+     page and leaves the previous one mostly blank. */
+  .card,
+  li,
+  tr,
+  blockquote,
+  figure {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* The long ones: the scorecard, the transcript list, the tab panes. */
+  section,
+  details,
+  .space-y-4,
+  .space-y-3 {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  /* A heading at the foot of a page with its content overleaf is the single
+     most common way a printed report reads as broken. */
+  h1, h2, h3, h4, summary {
+    break-after: avoid;
+    page-break-after: avoid;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Keep at least two lines of a paragraph together across a break. */
+  p, li {
+    orphans: 3;
+    widows: 3;
+  }
+
+  /* ── TRANSCRIPT ────────────────────────────────────────────────────────
+     On screen the transcript is a chat: agent right, customer left, in solid
+     colour bubbles at 72% width. Printed, that wastes most of the page width,
+     breaks badly across pages, and lays a heavy block of ink behind white
+     text — which many printers render as unreadable grey. On paper it becomes
+     what a transcript should be: full width, one speaker per row, the agent
+     distinguished by a rule down the side rather than by a fill.
+
+     The speaker label is already in the markup, so nothing is lost. */
+  [class*="justify-end"],
+  [class*="justify-start"] {
+    justify-content: flex-start !important;
+  }
+
+  [class*="max-w-[72%]"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    padding: 6pt 0 6pt 10pt !important;
+    border-left: 2.5pt solid #d4d4d8 !important;
+    background: transparent !important;
+    color: #111827 !important;
+  }
+
+  /* The agent's own turns, marked by the rule rather than a fill. */
+  [class*="bg-primary-600"] {
+    border-left-color: #4338ca !important;
+  }
+
+  /* The label reads as a quiet caption on screen; in print it is the only
+     thing separating two speakers, so it carries its weight. */
+  [class*="max-w-[72%]"] > [class*="opacity-70"] {
+    opacity: 1 !important;
+    font-weight: 700 !important;
+    font-size: 8.5pt !important;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #52525b !important;
+  }
+
+  /* Anything that leans on hover to be legible. */
+  *:hover {
+    transform: none !important;
+  }
+
+  /* Links print as text; the URL behind them is meaningless on paper. */
+  a {
+    text-decoration: none !important;
+    color: inherit !important;
+  }
+
+  /* Titles for the stacked panes. The tab bar is gone in print, so without
+     these the transcript simply runs on after the score with no break. */
+  .print-section-title {
+    display: block !important;
+    break-before: page;
+    page-break-before: always;
+    margin: 0 0 10pt !important;
+    padding-bottom: 5pt;
+    border-bottom: 1.5pt solid #18181b;
+    font-size: 13pt;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #18181b;
+  }
+
+  /* The first pane continues the header block on page one; forcing a break
+     there would leave the score summary alone on a page of its own.
+     NOT `:first-of-type` — the three titles sit in three different parents,
+     so each is the first of its type and every one of them would match. */
+  .print-section-title--first {
+    break-before: auto;
+    page-break-before: auto;
+  }
+}
+
+/* The print-only pane titles do not exist on screen. */
+.print-section-title {
+  display: none;
 }
 
 /* -- Product knowledge guides: the "signal board" --------------

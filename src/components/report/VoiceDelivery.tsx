@@ -271,12 +271,21 @@ export function VoiceDelivery({
   accentClassification,
   token,
   sessionId,
+  printing = false,
 }: {
   voice: VoiceAnalysis | null | undefined;
   section: ScoredSection | null | undefined;
   accentClassification?: AccentClassification | null;
   token?: string | null;
   sessionId?: string | null;
+  /**
+   * The report is being exported to PDF.
+   *
+   * A print captures the DOM as it stands, so anything behind a "show more"
+   * is simply absent from the file with nothing to say so. The word list is
+   * capped at five on screen; on paper it prints in full.
+   */
+  printing?: boolean;
 }) {
   /**
    * OPEN BY DEFAULT.
@@ -394,7 +403,7 @@ export function VoiceDelivery({
   const pace = voice!.pace;
   const words = voice!.wordIssues ?? [];
   const patterns = voice!.soundPatterns ?? [];
-  const visibleWords = showAllWords ? words : words.slice(0, 5);
+  const visibleWords = (showAllWords || printing) ? words : words.slice(0, 5);
   const talkRatio = voice!.talkListen?.agentTalkRatio;
   const behaviorFindings = voice!.behavior?.findings ?? [];
 
