@@ -172,6 +172,7 @@ function CallPageInner() {
     && (queueActiveSessionId === sessionIdParam || queueCompletedIds.includes(sessionIdParam));
   const [betweenCalls, setBetweenCalls] = useState<BetweenCalls | null>(null);
   const [callsInQueue, setCallsInQueue] = useState<number | null>(null);
+  const [nextCustomerName, setNextCustomerName] = useState<string | null>(null);
   const [breakPickerOpen, setBreakPickerOpen] = useState(false);
   const [breakChoice, setBreakChoice] = useState<BreakReason | null>(null);
   const [queueNote, setQueueNote] = useState<string | null>(null);
@@ -547,6 +548,7 @@ function CallPageInner() {
     if (!token) return null;
     const res = await dialer.queue(token);
     setCallsInQueue(res.data.callsInQueue);
+    setNextCustomerName(res.data.nextCustomerName);
     return res.data;
   }, [token]);
 
@@ -738,6 +740,7 @@ function CallPageInner() {
     try {
       const res = await dialer.shuffle(token);
       setCallsInQueue(res.data.callsInQueue);
+      setNextCustomerName(res.data.nextCustomerName);
       setQueueNote(res.data.shuffled > 1 ? 'Queue shuffled' : 'Nothing to shuffle');
     } catch (err: any) {
       setQueueNote(err?.message || 'Shuffle failed');
@@ -966,10 +969,9 @@ function CallPageInner() {
   // so the customer greeting is heard immediately instead of being dropped by
   // the browser autoplay policy. No pipeline/model behaviour changes here.
   if (!callStarted && !inQueue) {
-    const sd = sessionData?.scenario;
-    const personaName = sd?.personaName || '';
-    const camp = (sd?.campaign || '').toString().replace('_', ' ');
-    const diff = (sd?.difficulty || '').toString();
+    // The customer's name only — no campaign or difficulty before the call
+    // (owner ruling 2026-09-16; the server no longer sends them either).
+    const personaName = sessionData?.scenario?.personaName || '';
     return (
       <div style={{ minHeight: '100vh', background: VD.canvas, fontFamily: FONT, fontSize: 13, color: VD.text, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div style={{ background: VD.panel, border: `2px outset ${VD.borderLight}`, padding: 28, maxWidth: 440, width: '100%', textAlign: 'center' }}>
@@ -981,7 +983,7 @@ function CallPageInner() {
           </div>
           <h2 style={{ margin: '10px 0 6px', fontSize: 18 }}>Ready to start your practice call</h2>
           <p style={{ margin: '0 0 6px', color: '#333' }}>
-            You&apos;re about to place an outbound call{personaName ? <> to <b>{personaName}</b></> : null}{camp ? <> — <b>{camp}</b></> : null}{diff ? <> <span style={{ textTransform: 'capitalize' }}>({diff.toLowerCase()})</span></> : null}.
+            You&apos;re about to place an outbound call{personaName ? <> to <b>{personaName}</b></> : null}.
           </p>
           <p style={{ margin: '0 0 10px', fontSize: 12, color: '#555' }}>
             Put your headset on. The customer picks up the moment you start — no waiting.
@@ -1006,7 +1008,7 @@ function CallPageInner() {
               ← BACK TO ASSIGNMENTS
             </button>
           </div>
-          {!sessionData && <div style={{ marginTop: 12, fontSize: 11, color: '#777' }}>Loading scenario…</div>}
+          {!sessionData && <div style={{ marginTop: 12, fontSize: 11, color: '#777' }}>Loading…</div>}
         </div>
       </div>
     );
@@ -1155,6 +1157,9 @@ function CallPageInner() {
             {shownBetween.kind === 'countdown' && (
               <>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Waiting for next call</div>
+                {nextCustomerName && (
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Next customer: <b>{nextCustomerName}</b></div>
+                )}
                 <div style={{ fontSize: 34, fontWeight: 700, color: VD.logoBlue, marginBottom: 6 }}>{shownBetween.secondsLeft}</div>
                 <div style={{ fontSize: 12, color: '#555', marginBottom: 12 }}>Next call dials automatically. Headset on.</div>
               </>
@@ -1176,6 +1181,9 @@ function CallPageInner() {
             {shownBetween.kind === 'ready' && (
               <>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Ready for the next call?</div>
+                {nextCustomerName && (
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Next customer: <b>{nextCustomerName}</b></div>
+                )}
                 <div style={{ fontSize: 12, color: '#555', marginBottom: 12 }}>Press READY to take the next call.</div>
               </>
             )}
