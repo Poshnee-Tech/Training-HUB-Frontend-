@@ -4,24 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import TrainingFloorShell from '@/components/layout/TrainingFloorShell';
 import { useAuthStore } from '@/store/auth.store';
-import { assignments as assignmentsApi, sessions, calls } from '@/lib/api';
-import { difficultyLabel, productLabel } from '@/lib/labels';
-
-function campaignChip(campaign?: string) {
-  switch (campaign) {
-    case 'ACA': return 'border-air-signal/35 bg-air-signal/10 text-air-signal-bright';
-    case 'MEDICARE': return 'border-air-amber/40 bg-air-amber/12 text-air-amber';
-    default: return 'border-air-line/30 bg-air-line/10 text-air-muted';
-  }
-}
-
-function difficultyChip(difficulty?: string) {
-  switch (difficulty) {
-    case 'EASY': return 'border-air-signal/35 bg-air-signal/10 text-air-signal-bright';
-    case 'MEDIUM': return 'border-air-amber/40 bg-air-amber/12 text-air-amber';
-    default: return 'border-air-live/35 bg-air-live/10 text-air-live';
-  }
-}
+import { assignments as assignmentsApi, sessions, calls, dialer, BREAK_REASONS, type DialerQueueState } from '@/lib/api';
+import { useQueueStore } from '@/store/queue.store';
+import { unlockAudioContext } from '@/hooks/useWebSocket';
 
 export default function MyAssignmentsPage() {
   const router = useRouter();
@@ -29,8 +14,15 @@ export default function MyAssignmentsPage() {
   const [assignmentsList, setAssignmentsList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [startingId, setStartingId] = useState<string | null>(null);
-  const [filterCampaign, setFilterCampaign] = useState('ALL');
-  const [filterDifficulty, setFilterDifficulty] = useState('ALL');
+  const [callsInQueue, setCallsInQueue] = useState<number | null>(null);
+  // A single-agent call still open on the server (e.g. claimed as the agent
+  // left the queue). "Start my queue" resumes it, even with nothing queued.
+  const [openQueueSessionId, setOpenQueueSessionId] = useState<string | null>(null);
+  // The break taken from the call screen, which sends the agent here.
+  const [activeBreak, setActiveBreak] = useState<DialerQueueState['activeBreak']>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  const [startingQueue, setStartingQueue] = useState(false);
+  const [shuffling, setShuffling] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
 
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,13 +33,17 @@ export default function MyAssignmentsPage() {
     noticeTimer.current = setTimeout(() => setNotice(null), 5000);
   }
 
-  const visibleAssignments = assignmentsList.filter((a) => {
-    if (filterCampaign !== 'ALL' && a.scenario?.campaign !== filterCampaign) return false;
-    if (filterDifficulty !== 'ALL' && a.scenario?.difficulty !== filterDifficulty) return false;
-    return true;
-  });
+  // Only fronter/closer calls are listed; single calls are reached through the queue.
+  const dualAssignments = assignmentsList.filter((a) => a.flowType === 'DUAL');
 
   useEffect(() => { loadFromStorage(); }, [loadFromStorage]);
+
+  // Break clock.
+  useEffect(() => {
+    if (!activeBreak) return;
+    const t = setInterval(() => setClockNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [activeBreak]);
 
   useEffect(() => {
     if (!token) return;
@@ -57,12 +53,87 @@ export default function MyAssignmentsPage() {
   async function loadAssignments() {
     setLoading(true);
     try {
-      const res = await assignmentsApi.my(token!);
+      const [res, queue] = await Promise.all([
+        assignmentsApi.my(token!),
+        dialer.queue(token!).catch(() => null),
+      ]);
       setAssignmentsList(res.data);
+      setCallsInQueue(queue ? queue.data.callsInQueue : null);
+      setOpenQueueSessionId(queue && !queue.data.openSessionIsDual ? queue.data.openSessionId : null);
+      setActiveBreak(queue ? queue.data.activeBreak : null);
     } catch (err) {
       console.error('Failed to load assignments:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /**
+   * START MY QUEUE — the calls dial back to back from the call screen. The
+   * server picks the next call; this click is also the gesture that lets the
+   * customer's audio play, so it is unlocked here, before any await.
+   */
+  async function handleStartQueue() {
+    if (!token || startingQueue) return;
+    unlockAudioContext();
+    setStartingQueue(true);
+    try {
+      // Starting the queue is the agent saying READY.
+      await dialer.endBreak(token);
+      let sessionId: string;
+      if (openQueueSessionId) {
+        // Pressing "Resume open call" is the agent choosing to take it here.
+        sessionId = openQueueSessionId;
+      } else {
+        try {
+          const res = await sessions.startNext(token);
+          if (!res.data) {
+            showNotice('info', 'No calls are waiting in your queue.');
+            loadAssignments();
+            return;
+          }
+          sessionId = res.data.id;
+        } catch (err) {
+          // A call opened since the list loaded: offer it instead of losing it.
+          await loadAssignments();
+          throw err;
+        }
+      }
+      // Back from a break mid-run: keep the run, so the summary at the end
+      // still lists the calls taken before the break.
+      const queue = useQueueStore.getState();
+      if (queue.mode === 'running') queue.advance(sessionId);
+      else queue.start(sessionId);
+      router.push(`/call?sessionId=${sessionId}`);
+    } catch (err: any) {
+      showNotice('error', err.message);
+    } finally {
+      setStartingQueue(false);
+    }
+  }
+
+  /** End a break when there is nothing left to call. */
+  async function handleEndBreak() {
+    if (!token) return;
+    try {
+      await dialer.endBreak(token);
+      await loadAssignments();
+    } catch (err: any) {
+      showNotice('error', err.message);
+    }
+  }
+
+  async function handleShuffle() {
+    if (!token || shuffling) return;
+    setShuffling(true);
+    try {
+      const res = await dialer.shuffle(token);
+      showNotice('info', res.data.shuffled > 1 ? 'Queue shuffled.' : 'Nothing to shuffle.');
+      await loadAssignments();
+    } catch (err: any) {
+      showNotice('error', err.message);
+    } finally {
+      setShuffling(false);
     }
   }
 
@@ -77,6 +148,8 @@ export default function MyAssignmentsPage() {
       // the backend's "not configured for the dual-agent flow" guard.
       if (assignment.flowType === 'DUAL' && assignment.agentRole === 'FRONTER') {
         const res = await calls.startFronter(token, assignment.id);
+        // Started: a single call taken by hand ends any queue run in this tab.
+        useQueueStore.getState().stop();
         router.push(`/call?sessionId=${res.data.session.id}&callId=${res.data.call.id}`);
       } else if (assignment.flowType === 'DUAL' && assignment.agentRole === 'VERIFIER') {
         // Verifier needs a callId — auto-linked when fronter transfers
@@ -85,10 +158,14 @@ export default function MyAssignmentsPage() {
           return;
         }
         const res = await calls.startVerifier(token, assignment.callId, assignment.id);
+        // Started: a single call taken by hand ends any queue run in this tab.
+        useQueueStore.getState().stop();
         router.push(`/call?sessionId=${res.data.session.id}&callId=${assignment.callId}`);
       } else {
         // SINGLE flow — one agent, no transfer.
         const res = await sessions.start(token, assignment.id);
+        // Started: a single call taken by hand ends any queue run in this tab.
+        useQueueStore.getState().stop();
         router.push(`/call?sessionId=${res.data.id}`);
       }
     } catch (err: any) {
@@ -113,19 +190,6 @@ export default function MyAssignmentsPage() {
     }
   }
 
-  function formatSchedule(assignment: any) {
-    const date = new Date(assignment.scheduledDate).toLocaleDateString('en-US', {
-      weekday: 'short', month: 'short', day: 'numeric',
-    });
-    if (assignment.scheduledHour !== null && assignment.scheduledHour !== undefined) {
-      const hour = assignment.scheduledHour;
-      const ampm = hour >= 12 ? 'PM' : 'AM';
-      const h = hour % 12 || 12;
-      return `${date} at ${h}:00 ${ampm}`;
-    }
-    return date;
-  }
-
   return (
     <TrainingFloorShell>
       <main className="w-full min-w-0 px-6 py-7 pb-12 lg:px-8">
@@ -144,7 +208,7 @@ export default function MyAssignmentsPage() {
             </h1>
 
             <p className="mt-1 max-w-2xl text-[13.5px] leading-relaxed text-air-muted">
-              Practice calls your trainer has assigned to you. Filter the list and start the next call when you are ready.
+              Your trainer&apos;s calls are waiting in your queue. Start calling when you are ready.
             </p>
           </div>
           <button
@@ -158,149 +222,98 @@ export default function MyAssignmentsPage() {
           </button>
         </header>
 
-        {/* Filters */}
-        {!loading && assignmentsList.length > 0 && (
-          <div className="air-panel mb-5 flex flex-wrap items-end gap-3 rounded-[18px] border p-3.5">
-            <label className="block">
-              <span className="mb-1.5 block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-faint">Product</span>
-              <select
-                className="air-panel min-w-[190px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40"
-                value={filterCampaign}
-                onChange={(e) => setFilterCampaign(e.target.value)}
-              >
-                <option value="ALL">All products</option>
-                <option value="ACA">ACA</option>
-                <option value="MEDICARE">Medicare</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-faint">Difficulty</span>
-              <select
-                className="air-panel min-w-[190px] rounded-xl border bg-air-bg2 px-3.5 py-2.5 text-[13px] text-air-text outline-none transition focus:border-air-signal/40"
-                value={filterDifficulty}
-                onChange={(e) => setFilterDifficulty(e.target.value)}
-              >
-                <option value="ALL">All difficulties</option>
-                <option value="EASY">Easy</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="HARD">Hard</option>
-              </select>
-            </label>
-            {(filterCampaign !== 'ALL' || filterDifficulty !== 'ALL') && (
-              <button
-                type="button"
-                onClick={() => { setFilterCampaign('ALL'); setFilterDifficulty('ALL'); }}
-                className="rounded-xl px-3 py-2.5 text-[12.5px] font-semibold text-air-muted transition hover:bg-air-line/[0.06] hover:text-air-signal-bright"
-              >
-                Clear filters
-              </button>
-            )}
-            <div className="ml-auto pb-2.5 font-mono-ui text-[9.5px] font-bold uppercase tracking-[0.08em] text-air-faint">
-              Showing {visibleAssignments.length} of {assignmentsList.length}
-            </div>
-          </div>
-        )}
-
+        {/* ── THE DIALER (owner ruling 2026-09-16) ─────────────────────────────
+          * A real dialer does not show the agent who is next: no customer
+          * name, age, mood, scenario or description before the call lands.
+          * Only how many calls are waiting and a way to start taking them.
+          * The single-call cards and their filters were removed for that. */}
         {loading ? (
           <div className="flex items-center justify-center py-14">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-air-signal border-t-transparent" />
           </div>
-        ) : assignmentsList.length === 0 ? (
-          <div className="air-panel rounded-[20px] border border-dashed px-6 py-12 text-center backdrop-blur-md">
-            <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-[16px] border border-air-line/25 bg-air-line/10">
-              <svg className="h-6 w-6 stroke-air-faint" fill="none" viewBox="0 0 24 24" strokeWidth={1.4} aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25Z" />
-              </svg>
-            </div>
-            <h2 className="font-display text-[17px] font-extrabold tracking-[-0.02em] text-air-text">Nothing assigned yet</h2>
-            <p className="mx-auto mt-1.5 max-w-md text-[12.5px] leading-relaxed text-air-muted">
-              Your trainer hasn&apos;t set you any practice calls yet. Check back later, or ask your supervisor.
-            </p>
-          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {visibleAssignments.length === 0 ? (
-              <div className="air-panel col-span-full rounded-[20px] border border-dashed px-6 py-10 text-center text-[12.5px] text-air-faint backdrop-blur-md">
-                No assigned calls match these filters.
+          <div className="air-panel mx-auto flex max-w-xl flex-col items-center rounded-[22px] border px-6 py-10 text-center backdrop-blur-md">
+            {activeBreak && (
+              <div className="mb-6 w-full rounded-[14px] border border-air-amber/40 bg-air-amber/10 px-4 py-3" role="status">
+                <span className="block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-amber">
+                  On break · {BREAK_REASONS.find((r) => r.value === activeBreak.reason)?.label ?? 'Break'}
+                </span>
+                <span className="mt-1 block font-display text-[30px] font-extrabold tabular-nums leading-none text-air-text">
+                  {(() => {
+                    const sec = Math.max(0, Math.floor((clockNow - new Date(activeBreak.startedAt).getTime()) / 1000));
+                    const h = Math.floor(sec / 3600);
+                    const mm = String(Math.floor((sec % 3600) / 60)).padStart(h ? 2 : 1, '0');
+                    const ss = String(sec % 60).padStart(2, '0');
+                    return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+                  })()}
+                </span>
               </div>
-            ) : null}
-            {visibleAssignments.map((assignment) => (
-              <div key={assignment.id} className="air-panel flex flex-col rounded-[18px] border p-5 backdrop-blur-md transition-all duration-200 hover:border-air-line/50 hover:shadow-[0_20px_45px_-28px_rgb(var(--air-signal)/0.45)]">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex gap-2">
-                    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-mono-ui text-[10px] font-bold uppercase tracking-[0.08em] ${campaignChip(assignment.scenario.campaign)}`}>
-                      {productLabel(assignment.scenario.campaign)}
-                    </span>
-                    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-mono-ui text-[10px] font-bold uppercase tracking-[0.08em] ${difficultyChip(assignment.scenario.difficulty)}`}>
-                      {difficultyLabel(assignment.scenario.difficulty)}
-                    </span>
-                  </div>
-                  {/* Role badge is only meaningful when the assignment is part
-                      of the dual-agent flow. For SINGLE assignments the
-                      agentRole field is FRONTER by default but the role
-                      label would be misleading. */}
-                  {assignment.flowType === 'DUAL' && assignment.agentRole && (
-                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-air-cyan/35 bg-air-cyan/10 px-2.5 py-1 font-mono-ui text-[10px] font-bold uppercase tracking-[0.08em] text-air-cyan">
-                      {assignment.agentRole}
-                    </span>
-                  )}
-                </div>
-
-                <h3 className="mb-1.5 font-display text-[17px] font-extrabold tracking-[-0.02em] text-air-text">
-                  {assignment.scenario.name}
-                </h3>
-
-                {assignment.scenario.description && (
-                  <p className="mb-3 flex-1 text-[12.5px] leading-relaxed text-air-muted">
-                    {assignment.scenario.description}
-                  </p>
-                )}
-
-                {/* Persona info */}
-                <div className="air-hairline mb-3 border-t pt-3">
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-3 text-[12.5px] text-air-muted">
-                    <div>
-                      <span className="font-mono-ui text-[9.5px] font-bold uppercase tracking-[0.1em] text-air-faint">Customer</span>
-                      <p className="mt-0.5 font-semibold text-air-text">{assignment.scenario.personaName}</p>
-                    </div>
-                    <div>
-                      <span className="font-mono-ui text-[9.5px] font-bold uppercase tracking-[0.1em] text-air-faint">Age</span>
-                      <p className="mt-0.5 font-semibold text-air-text">{assignment.scenario.personaAge}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="font-mono-ui text-[9.5px] font-bold uppercase tracking-[0.1em] text-air-faint">Mood</span>
-                      <p className="mt-0.5 font-semibold text-air-text">{assignment.scenario.personaMood}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Schedule */}
-                <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-air-signal/25 bg-air-signal/[0.08] px-3.5 py-2.5 text-[12.5px] font-medium text-air-signal-bright">
-                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" aria-hidden>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
-                  </svg>
-                  <span className="font-semibold">{formatSchedule(assignment)}</span>
-                </div>
-
-                {/* Admin notes */}
-                {assignment.notes && (
-                  <div className="mb-3 rounded-xl border border-air-line/25 bg-air-line/[0.07] px-3.5 py-2.5 text-[12px] italic leading-relaxed text-air-muted">
-                    Note from your trainer: {assignment.notes}
-                  </div>
-                )}
-
+            )}
+            <span className="font-mono-ui text-[10.5px] font-bold uppercase tracking-[0.12em] text-air-faint">Calls in Queue</span>
+            <span className="mt-2 font-display text-[64px] font-extrabold leading-none tracking-[-0.04em] text-air-text">
+              {callsInQueue ?? '—'}
+            </span>
+            <p className="mt-3 max-w-sm text-[13px] leading-relaxed text-air-muted">
+              {openQueueSessionId
+                ? 'You have a call still open. Resume it, and the queue continues after it.'
+                : activeBreak && callsInQueue !== 0
+                  ? 'Press Start calling when you are back. Your break ends and the next call dials.'
+                : callsInQueue === 0
+                  ? 'No calls waiting. Your trainer will assign more.'
+                  : 'Calls connect one after another. Take a break from the call screen whenever you need one.'}
+            </p>
+            <div className="mt-6 flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
+              <button
+                type="button"
+                onClick={handleStartQueue}
+                disabled={startingQueue || callsInQueue === null || (callsInQueue === 0 && !openQueueSessionId)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-air-signal to-air-signal-bright px-7 py-3 text-[14px] font-bold text-white shadow-[0_0_22px_rgb(var(--air-signal)/0.35)] transition-all duration-150 hover:-translate-y-px disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none"
+              >
+                {startingQueue ? 'Dialing…' : openQueueSessionId ? '▶ Resume open call' : '▶ Start calling'}
+              </button>
+              {activeBreak && callsInQueue === 0 && !openQueueSessionId && (
                 <button
-                  onClick={() => handleStartCall(assignment)}
-                  disabled={startingId === assignment.id}
-                  className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-air-signal to-air-signal-bright px-4 py-2.5 text-[13px] font-bold text-white shadow-[0_0_22px_rgb(var(--air-signal)/0.35)] transition-all duration-150 hover:-translate-y-px hover:shadow-[0_0_30px_rgb(var(--air-signal)/0.5)] disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none"
+                  type="button"
+                  onClick={handleEndBreak}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-air-line/30 px-5 py-3 text-[13px] font-semibold text-air-text transition hover:border-air-line/50"
                 >
-                  {startingId === assignment.id ? 'Starting...' :
-                    assignment.flowType === 'DUAL' && assignment.agentRole === 'VERIFIER' ? 'Start Closer Call' :
-                    assignment.flowType === 'DUAL' && assignment.agentRole === 'FRONTER' ? 'Start Fronter Call' :
-                    'Start Call'}
+                  End break
                 </button>
-              </div>
-            ))}
+              )}
+              <button
+                type="button"
+                onClick={handleShuffle}
+                disabled={shuffling || callsInQueue === null || callsInQueue < 2}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-air-line/30 px-5 py-3 text-[13px] font-semibold text-air-muted transition hover:border-air-line/50 hover:text-air-text disabled:opacity-50"
+                title="Shuffle the order your queued calls will dial in"
+              >
+                {shuffling ? 'Shuffling…' : '⇄ Shuffle'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Fronter / closer calls cannot be queued — each depends on another
+          * agent — so they keep a start button, still with no customer detail. */}
+        {!loading && dualAssignments.length > 0 && (
+          <div className="mx-auto mt-6 max-w-xl">
+            <span className="mb-2 block font-mono-ui text-[10px] font-bold uppercase tracking-[0.1em] text-air-faint">Team calls</span>
+            <div className="flex flex-col gap-2">
+              {dualAssignments.map((assignment) => (
+                <div key={assignment.id} className="air-panel flex items-center justify-between gap-3 rounded-[14px] border px-4 py-3">
+                  <span className="text-[13px] font-semibold text-air-text">
+                    {assignment.agentRole === 'VERIFIER' ? 'Closer call' : 'Fronter call'}
+                  </span>
+                  <button
+                    onClick={() => handleStartCall(assignment)}
+                    disabled={startingId === assignment.id}
+                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-air-signal to-air-signal-bright px-4 py-2 text-[12.5px] font-bold text-white transition hover:-translate-y-px disabled:translate-y-0 disabled:opacity-50"
+                  >
+                    {startingId === assignment.id ? 'Starting...' : assignment.agentRole === 'VERIFIER' ? 'Start Closer Call' : 'Start Fronter Call'}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         </div>

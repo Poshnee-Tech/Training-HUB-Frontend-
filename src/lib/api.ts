@@ -254,6 +254,15 @@ export const sessions = {
       ...(fronterDisposition ? { body: { fronterDisposition } } : {}),
     }),
 
+  /**
+   * The dialer queue: the server claims and opens the next queued call.
+   * `data` is null when the queue is empty.
+   */
+  startNext: (token: string) =>
+    request<{ success: boolean; data: any | null }>('/api/sessions/start-next', {
+      method: 'POST', body: {}, token,
+    }),
+
   transcript: (token: string, id: string) =>
     request<{ success: boolean; data: any[] }>(`/api/sessions/${id}/transcript`, { token }),
 
@@ -268,6 +277,47 @@ export const sessions = {
 export const assignments = {
   my: (token: string) =>
     request<{ success: boolean; data: any[] }>('/api/agents/my-assignments', { token }),
+};
+
+// ── Dialer queue + breaks (agent-facing) ─────────────────────
+export type BreakReason = 'LUNCH' | 'RESTROOM' | 'COACHING' | 'MEETING' | 'TECHNICAL' | 'PERSONAL' | 'OTHER';
+
+export const BREAK_REASONS: Array<{ value: BreakReason; label: string }> = [
+  { value: 'LUNCH', label: 'Lunch' },
+  { value: 'RESTROOM', label: 'Restroom' },
+  { value: 'COACHING', label: 'Coaching' },
+  { value: 'MEETING', label: 'Meeting' },
+  { value: 'TECHNICAL', label: 'Technical issue' },
+  { value: 'PERSONAL', label: 'Personal' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+export interface DialerQueueState {
+  callsInQueue: number;
+  activeBreak: { id: string; reason: BreakReason; startedAt: string } | null;
+  openSessionId: string | null;
+  /** The open call belongs to the fronter/closer flow, which the queue never adopts. */
+  openSessionIsDual: boolean;
+}
+
+export const dialer = {
+  queue: (token: string) =>
+    request<{ success: boolean; data: DialerQueueState }>('/api/agents/queue', { token }),
+
+  shuffle: (token: string) =>
+    request<{ success: boolean; data: DialerQueueState & { shuffled: number } }>('/api/agents/queue/shuffle', {
+      method: 'POST', token,
+    }),
+
+  startBreak: (token: string, reason: BreakReason) =>
+    request<{ success: boolean; data: { id: string; reason: BreakReason; startedAt: string } }>('/api/agents/breaks', {
+      method: 'POST', body: { reason }, token,
+    }),
+
+  endBreak: (token: string) =>
+    request<{ success: boolean; data: any | null }>('/api/agents/breaks/end', {
+      method: 'POST', token,
+    }),
 };
 
 // ── Evaluations ──────────────────────────────────────────────

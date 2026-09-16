@@ -7,8 +7,10 @@ import { useCallStore } from '@/store/call.store';
 import { useWebSocket, unlockAudioContext } from '@/hooks/useWebSocket';
 import { useAudioRecorder } from '@/hooks/useAudioRecorder';
 import { useBrowserSTT } from '@/hooks/useBrowserSTT';
-import { sessions, calls } from '@/lib/api';
+import { sessions, calls, dialer, BREAK_REASONS, type BreakReason } from '@/lib/api';
 import { formatDuration } from '@/lib/utils';
+import { useQueueStore, isQueueSession, pageHasHadUserGesture } from '@/store/queue.store';
+import type { DialerQueueState } from '@/lib/api';
 
 /* =========================================================================
  * VICIDIAL-styled agent call screen.
@@ -39,6 +41,36 @@ const VD = {
 } as const;
 
 const FONT = 'Arial, Helvetica, sans-serif';
+
+// ── DIALER QUEUE ─────────────────────────────────────────────────
+// Seconds between dispositioning one queue call and the next one dialing.
+const NEXT_CALL_DELAY_SECONDS = 5;
+
+/**
+ * What the dialer shows between two queue calls. The server owns the queue;
+ * this is only which screen the agent is looking at.
+ *   countdown — the next call dials when it reaches 0
+ *   dialing   — start-next is in flight
+ *   ready     — waiting for READY with no break: after a reload the browser
+ *               needs a click before the customer's audio can play
+ *   end-failed — the call did not close on the server; RETRY re-sends the end
+ *   resume    — a single-agent call is already open on the server; taking it
+ *               over needs a click, since it may be live in another tab
+ *   error     — something went wrong; the agent chooses what to do
+ */
+type BetweenCalls =
+  | { kind: 'countdown'; secondsLeft: number }
+  | { kind: 'dialing' }
+  | { kind: 'ready' }
+  | { kind: 'end-failed'; sessionId: string; message: string }
+  | { kind: 'resume'; sessionId: string }
+  | { kind: 'error'; message: string }
+  // Derived only, never stored: a reload between calls, until the server answers.
+  | { kind: 'loading' };
+
+function breakLabel(reason: BreakReason | null | undefined): string {
+  return BREAK_REASONS.find((r) => r.value === reason)?.label ?? 'Break';
+}
 
 const EMPTY_CUSTOMER = {
   title: '', first: '', mi: '', last: '',
@@ -130,6 +162,35 @@ function CallPageInner() {
   const [clock, setClock] = useState('');
   const [micError, setMicError] = useState<string | null>(null);
   const [customer, setCustomer] = useState(EMPTY_CUSTOMER);
+
+  // Dialer queue state (see NEXT_CALL_DELAY_SECONDS / BetweenCalls above)
+  const queueMode = useQueueStore((q) => q.mode);
+  const queueActiveSessionId = useQueueStore((q) => q.activeSessionId);
+  const queueCompletedIds = useQueueStore((q) => q.completedSessionIds);
+  const pendingBreakReason = useQueueStore((q) => q.pendingBreakReason);
+  const inQueue = queueMode === 'running' && !!sessionIdParam
+    && (queueActiveSessionId === sessionIdParam || queueCompletedIds.includes(sessionIdParam));
+  const [betweenCalls, setBetweenCalls] = useState<BetweenCalls | null>(null);
+  const [callsInQueue, setCallsInQueue] = useState<number | null>(null);
+  const [breakPickerOpen, setBreakPickerOpen] = useState(false);
+  const [breakChoice, setBreakChoice] = useState<BreakReason | null>(null);
+  const [queueNote, setQueueNote] = useState<string | null>(null);
+  const dialingRef = useRef(false);
+  // Set once the agent leaves the queue, so a countdown or a request already
+  // in flight cannot dial a call on the way out.
+  const leavingRef = useRef(false);
+  const queueCheckedForRef = useRef<string | null>(null);
+  // A queue call that just dialed connects on its own — the agent is already
+  // at the desk. After a reload the browser has had no click yet, so the
+  // TAKE CALL gate asks for one instead.
+  const queueAutoStart = !!sessionIdParam && sessionId === sessionIdParam && queueMode === 'running'
+    && queueActiveSessionId === sessionIdParam && pageHasHadUserGesture();
+  const callStarted = hasStarted || queueAutoStart;
+
+  // The fronter's disposition (see DISPOSITIONS below).
+  const [dispositionOpen, setDispositionOpen] = useState(false);
+  const [dispositionChoice, setDispositionChoice] = useState<string | null>(null);
+  const [dispositionSubmitting, setDispositionSubmitting] = useState(false);
 
   // Send mic audio to backend for Deepgram STT
   const sendAudioRef = useRef(sendAudio);
@@ -309,6 +370,12 @@ function CallPageInner() {
     setHasStarted(false);
     setSessionData(null);
     setCustomer(EMPTY_CUSTOMER);
+    setBetweenCalls(null);
+    setBreakPickerOpen(false);
+    setDispositionOpen(false);
+    setDispositionChoice(null);
+    setDispositionSubmitting(false);
+    dialingRef.current = false;
 
     stopRecording();
     stopBrowserStt();
@@ -335,8 +402,8 @@ function CallPageInner() {
     // Only connect once the trainee has explicitly started the call (the Start
     // gesture). Reconnects after a drop are driven inside useWebSocket and are
     // unaffected by this gate.
-    if (sessionId && token && status === 'idle' && hasStarted) connect();
-  }, [sessionId, token, status, connect, hasStarted]);
+    if (sessionId && token && status === 'idle' && callStarted) connect();
+  }, [sessionId, token, status, connect, callStarted]);
 
   // Load checklist for dual-agent calls
   useEffect(() => {
@@ -468,9 +535,219 @@ function CallPageInner() {
     { value: 'TRANSFERRED', label: 'Transferred' },
     { value: 'OTHER', label: 'Other' },
   ];
-  const [dispositionOpen, setDispositionOpen] = useState(false);
-  const [dispositionChoice, setDispositionChoice] = useState<string | null>(null);
-  const [dispositionSubmitting, setDispositionSubmitting] = useState(false);
+
+  // ── DIALER QUEUE HANDLERS ─────────────────────────────────────────────────
+  //
+  // After a queue call is dispositioned the agent stays on this screen: the
+  // next call counts down and dials in place, or a break asked for during the
+  // call begins. The server decides what the next call is; reports are not
+  // opened between calls — the run's summary lists them all at the end.
+
+  const refreshQueue = useCallback(async () => {
+    if (!token) return null;
+    const res = await dialer.queue(token);
+    setCallsInQueue(res.data.callsInQueue);
+    return res.data;
+  }, [token]);
+
+  const finishQueue = useCallback((endBreakFirst: boolean) => {
+    leavingRef.current = true;
+    setBetweenCalls(null);
+    const completed = useQueueStore.getState().completedSessionIds;
+    const leave = () => {
+      useQueueStore.getState().stop();
+      router.push(completed.length > 0 ? `/queue-summary?ids=${completed.join(',')}` : '/scenarios');
+    };
+    // Leaving the dialer ends a break; otherwise it would keep running.
+    if (endBreakFirst && token) {
+      dialer.endBreak(token).catch(() => {}).finally(leave);
+    } else {
+      leave();
+    }
+  }, [router, token]);
+
+  /**
+   * ON BREAK → back to Assignments (owner ruling 2026-09-16). The break is
+   * timed there, and "Start calling" ends it and dials the next call. The
+   * queue run is kept, so the summary still lists every call taken.
+   */
+  const goToBreakScreen = useCallback(() => {
+    leavingRef.current = true;
+    setBetweenCalls(null);
+    router.push('/scenarios');
+  }, [router]);
+
+  /** Put a call the server already opened for this agent on the line. */
+  const adoptOpenCall = useCallback((openSessionId: string) => {
+    if (leavingRef.current) return;
+    useQueueStore.getState().advance(openSessionId);
+    router.replace(`/call?sessionId=${openSessionId}`);
+  }, [router]);
+
+  /**
+   * Decide the between-calls screen from the server's state. A call still
+   * open on the server comes first: one this run already finished did not
+   * close (offer to close it again); any other single-agent call — e.g.
+   * start-next committed but its response never arrived — is offered to
+   * RESUME rather than thrown away. Never taken over automatically: it may be
+   * live in another tab. `whenWaiting` is the screen when calls simply wait.
+   */
+  const applyQueueState = useCallback((state: DialerQueueState, whenWaiting: BetweenCalls) => {
+    if (leavingRef.current) return;
+    // An end that failed comes first, even if the server has since closed the
+    // row itself (a customer hang-up): ending is idempotent, and resending it
+    // is what records the disposition the agent picked.
+    const failed = useQueueStore.getState().failedEnd;
+    if (failed) {
+      setBetweenCalls({ kind: 'end-failed', sessionId: failed.sessionId, message: 'Your last call has not been ended yet.' });
+    } else if (state.openSessionId) {
+      if (state.openSessionIsDual) {
+        setBetweenCalls({ kind: 'error', message: 'You have a fronter or closer call open. Finish it from My Assignments, then return to the queue.' });
+      } else if (useQueueStore.getState().completedSessionIds.includes(state.openSessionId)) {
+        setBetweenCalls({ kind: 'end-failed', sessionId: state.openSessionId, message: 'Your last call has not closed on the server yet.' });
+      } else {
+        setBetweenCalls({ kind: 'resume', sessionId: state.openSessionId });
+      }
+    } else if (state.activeBreak) {
+      goToBreakScreen();
+    } else if (state.callsInQueue === 0) {
+      finishQueue(false);
+    } else {
+      setBetweenCalls(whenWaiting);
+    }
+  }, [finishQueue, goToBreakScreen]);
+
+  /** What follows a finished queue call. */
+  const continueQueue = useCallback(async () => {
+    if (!token || leavingRef.current) return;
+    try {
+      const state = await refreshQueue();
+      if (!state) return;
+      const pending = useQueueStore.getState().pendingBreakReason;
+      // No calls left: the run ends at the summary, and there is nothing to
+      // take a break from.
+      if (pending && state.callsInQueue === 0) useQueueStore.getState().setPendingBreak(null);
+      else if (pending && !state.openSessionId && !state.activeBreak && !useQueueStore.getState().failedEnd) {
+        await dialer.startBreak(token, pending);
+        useQueueStore.getState().setPendingBreak(null);
+        if (!leavingRef.current) goToBreakScreen();
+        return;
+      }
+      if (state.activeBreak) useQueueStore.getState().setPendingBreak(null);
+      applyQueueState(state, { kind: 'countdown', secondsLeft: NEXT_CALL_DELAY_SECONDS });
+    } catch (err: any) {
+      if (!leavingRef.current) setBetweenCalls({ kind: 'error', message: err?.message || 'Could not reach the dialer queue.' });
+    }
+  }, [token, refreshQueue, applyQueueState, goToBreakScreen]);
+
+  const dialNextCall = useCallback(async () => {
+    if (!token || dialingRef.current || leavingRef.current) return;
+    if (useQueueStore.getState().mode !== 'running') return;
+    dialingRef.current = true;
+    setBetweenCalls({ kind: 'dialing' });
+    try {
+      const res = await sessions.startNext(token);
+      if (!res.data) {
+        dialingRef.current = false;
+        finishQueue(false);
+        return;
+      }
+      if (leavingRef.current) {
+        // Claimed as the agent left: it stays open on the server and the next
+        // "Start my queue" adopts it, so it is not lost.
+        dialingRef.current = false;
+        return;
+      }
+      useQueueStore.getState().advance(res.data.id);
+      // The session-change effect resets this screen for the new call, and
+      // `queueAutoStart` connects it.
+      router.replace(`/call?sessionId=${res.data.id}`);
+    } catch (err: any) {
+      dialingRef.current = false;
+      const state = await refreshQueue().catch(() => null);
+      if (state && (state.openSessionId || state.activeBreak)) {
+        // A call already open (offer to resume it) or a break taken in another tab.
+        applyQueueState(state, { kind: 'ready' });
+      } else if (!leavingRef.current) {
+        setBetweenCalls({ kind: 'error', message: err?.message || 'Could not dial the next call.' });
+      }
+    }
+  }, [token, router, refreshQueue, finishQueue, applyQueueState]);
+
+  /**
+   * READY — from a break, or after a reload. The click is also the gesture
+   * that lets the next customer's audio play.
+   */
+  const handleReady = useCallback(async () => {
+    if (!token) return;
+    unlockAudioContext();
+    try {
+      await dialer.endBreak(token);
+    } catch (err: any) {
+      setBetweenCalls({ kind: 'error', message: err?.message || 'Could not end the break.' });
+      return;
+    }
+    await dialNextCall();
+  }, [token, dialNextCall]);
+
+  /** RETRY after a call failed to close: send the end again, then carry on. */
+  const retryEndCall = useCallback(async () => {
+    if (!token || betweenCalls?.kind !== 'end-failed') return;
+    const failedId = betweenCalls.sessionId;
+    const saved = useQueueStore.getState().failedEnd;
+    const disposition = saved?.sessionId === failedId ? saved.disposition : undefined;
+    setBetweenCalls({ kind: 'dialing' });
+    try {
+      await sessions.end(token, failedId, disposition);
+    } catch (err: any) {
+      setBetweenCalls({ kind: 'end-failed', sessionId: failedId, message: 'Could not end the call: ' + (err?.message || 'unknown error') });
+      return;
+    }
+    useQueueStore.getState().setFailedEnd(null);
+    await continueQueue();
+  }, [token, betweenCalls, continueQueue]);
+
+  /**
+   * BREAK — between calls it starts now and stops the countdown. During a
+   * call (including one the customer ended but not yet dispositioned), or
+   * while the next call is already dialing, it is held and taken as soon as
+   * that call is dispositioned; a call on the line is never cut off.
+   */
+  const confirmBreak = useCallback(async () => {
+    if (!breakChoice || !token) return;
+    setBreakPickerOpen(false);
+    if (!betweenCalls || betweenCalls.kind === 'dialing' || dialingRef.current) {
+      useQueueStore.getState().setPendingBreak(breakChoice);
+      return;
+    }
+    try {
+      await dialer.startBreak(token, breakChoice);
+      goToBreakScreen();
+    } catch (err: any) {
+      setBetweenCalls({ kind: 'error', message: err?.message || 'Could not start the break.' });
+    }
+  }, [breakChoice, token, betweenCalls, goToBreakScreen]);
+
+  const openBreakPicker = useCallback(() => {
+    setBreakChoice(null);
+    setBreakPickerOpen(true);
+  }, []);
+
+  const handleShuffle = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await dialer.shuffle(token);
+      setCallsInQueue(res.data.callsInQueue);
+      setQueueNote(res.data.shuffled > 1 ? 'Queue shuffled' : 'Nothing to shuffle');
+    } catch (err: any) {
+      setQueueNote(err?.message || 'Shuffle failed');
+    }
+  }, [token]);
+
+  const handleEndQueue = useCallback(() => {
+    if (!confirm('Leave the queue? Calls you have not taken stay assigned to you.')) return;
+    finishQueue(true);
+  }, [finishQueue]);
 
   const endSessionCommon = useCallback(async (fronterDisposition?: string) => {
     if (!token || !sessionId) {
@@ -483,15 +760,76 @@ function CallPageInner() {
     stopBrowserStt();
     disconnect();
     if (timerRef.current) clearInterval(timerRef.current);
+    const queued = isQueueSession(sessionId);
     try {
       await sessions.end(token, sessionId, fronterDisposition);
+      if (queued) {
+        useQueueStore.getState().markCurrentDone(sessionId);
+        setStatus('completed');
+        await continueQueue();
+        return;
+      }
       router.push(`/reports/${sessionId}`);
     } catch (err: any) {
       console.error('[CallPage] Failed to end session:', err);
-      alert('Could not end the session cleanly: ' + (err?.message || 'unknown error') + '\nYou can still navigate away — the report will be generated from whatever was recorded.');
       setStatus('completed');
+      if (queued) {
+        useQueueStore.getState().markCurrentDone(sessionId);
+        useQueueStore.getState().setFailedEnd({ sessionId, disposition: fronterDisposition });
+        setBetweenCalls({
+          kind: 'end-failed',
+          sessionId,
+          message: 'Could not end the call: ' + (err?.message || 'unknown error'),
+        });
+        return;
+      }
+      alert('Could not end the session cleanly: ' + (err?.message || 'unknown error') + '\nYou can still navigate away — the report will be generated from whatever was recorded.');
     }
-  }, [token, sessionId, setStatus, resetSpeechTurn, stopRecording, stopBrowserStt, disconnect, router]);
+  }, [token, sessionId, setStatus, resetSpeechTurn, stopRecording, stopBrowserStt, disconnect, router, continueQueue]);
+
+  // Countdown to the next queue call. Held while the agent is choosing a
+  // pause code, so a call never dials into the picker.
+  useEffect(() => {
+    if (betweenCalls?.kind !== 'countdown' || breakPickerOpen) return;
+    const last = betweenCalls.secondsLeft <= 1;
+    const t = setTimeout(() => {
+      if (last) {
+        dialNextCall();
+        return;
+      }
+      setBetweenCalls((b) => (b?.kind === 'countdown' ? { kind: 'countdown', secondsLeft: b.secondsLeft - 1 } : b));
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [betweenCalls, breakPickerOpen, dialNextCall]);
+
+  useEffect(() => {
+    if (!queueNote) return;
+    const t = setTimeout(() => setQueueNote(null), 3000);
+    return () => clearTimeout(t);
+  }, [queueNote]);
+
+  // An auto-started queue call: make sure playback is unlocked. The page has
+  // had a click (queueAutoStart requires it), so the browser allows this.
+  useEffect(() => {
+    if (queueAutoStart) unlockAudioContext();
+  }, [queueAutoStart]);
+
+  // Once per queue page: load Calls in Queue, and after a reload between
+  // calls, put the agent back where they were (break, READY, or the summary).
+  useEffect(() => {
+    if (!token || !sessionIdParam || sessionId !== sessionIdParam) return;
+    if (queueCheckedForRef.current === sessionIdParam) return;
+    if (!isQueueSession(sessionIdParam)) return;
+    queueCheckedForRef.current = sessionIdParam;
+    const betweenAfterReload = useQueueStore.getState().activeSessionId === null;
+    refreshQueue()
+      .then((state) => {
+        if (state && betweenAfterReload) applyQueueState(state, { kind: 'ready' });
+      })
+      .catch((err: any) => {
+        if (betweenAfterReload) setBetweenCalls({ kind: 'error', message: err?.message || 'Could not reach the dialer queue.' });
+      });
+  }, [token, sessionIdParam, sessionId, refreshQueue, applyQueueState]);
 
   // END CALL — the trainee dispositions the call before it closes.
   const handleEndCall = useCallback(() => {
@@ -571,7 +909,6 @@ function CallPageInner() {
 
   // Derived display strings
   const campaign = (sessionData?.scenario?.campaign || '—').toString().replace('_', ' ');
-  const scenarioName = sessionData?.scenario?.name || '';
   const ext = useMemo(() => 'TRAIN-' + (user?.id || '').slice(0, 4).toUpperCase(), [user?.id]);
   const userLabel = user ? `${user.firstName} ${user.lastName}` : '—';
   const sessionShort = sessionId ? sessionId.slice(0, 8).toUpperCase() : '—';
@@ -596,11 +933,39 @@ function CallPageInner() {
     );
   }
 
+  // Between queue calls. `loading` covers a reload until the server answers,
+  // so the finished call's buttons are never live underneath.
+  const shownBetween: BetweenCalls | null = betweenCalls
+    ?? (inQueue && queueActiveSessionId !== sessionIdParam ? { kind: 'loading' } : null);
+
+  // A queue call on a page that has had no click yet (a reload, or a browser
+  // that cannot tell): one click before the customer's audio can play. No
+  // brief — on a real dialer the call just lands.
+  if (!callStarted && inQueue && sessionId === sessionIdParam
+    && queueActiveSessionId === sessionIdParam && !pageHasHadUserGesture()) {
+    return (
+      <div style={{ minHeight: '100vh', background: VD.canvas, fontFamily: FONT, fontSize: 13, color: VD.text, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ background: VD.panel, border: `2px outset ${VD.borderLight}`, padding: 28, maxWidth: 420, width: '100%', textAlign: 'center' }}>
+          <div style={{ fontFamily: 'Georgia, serif', fontSize: 24, fontWeight: 700, color: VD.logoBlue, letterSpacing: -1 }}>
+            VICI<span style={{ color: VD.statusRed }}>dial</span>
+          </div>
+          <h2 style={{ margin: '10px 0 6px', fontSize: 18 }}>Call waiting</h2>
+          <p style={{ margin: '0 0 18px', color: '#333' }}>
+            Your browser needs a click before the customer can be heard.
+          </p>
+          <button onClick={handleBeginCall} style={{ ...vdBtn('green', { padding: '10px 30px', fontSize: 15 }) }}>
+            ▶ TAKE CALL
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Pre-call gate — show a Start screen until the trainee clicks Start. That
   // single gesture unlocks audio playback AND triggers the (now lazy) connect,
   // so the customer greeting is heard immediately instead of being dropped by
   // the browser autoplay policy. No pipeline/model behaviour changes here.
-  if (!hasStarted) {
+  if (!callStarted && !inQueue) {
     const sd = sessionData?.scenario;
     const personaName = sd?.personaName || '';
     const camp = (sd?.campaign || '').toString().replace('_', ' ');
@@ -717,7 +1082,152 @@ function CallPageInner() {
         * stopped and `status` went to 'completed' with nothing on screen. The
         * server now names the ending, so it is shown here in plain language,
         * for EVERY customer-side ending and for a completed transfer. */}
-      {status === 'completed' && endReason && (
+      {/* ── BREAK REASON PICKER (dialer queue) ─────────────────────────────── */}
+      {breakPickerOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 95, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT,
+        }}>
+          <div role="dialog" aria-label="Pause code" style={{ background: VD.panel, border: `2px outset ${VD.borderLight}`, padding: '20px 26px', width: 'min(380px, calc(100vw - 32px))' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Enter a pause code</div>
+            <div style={{ fontSize: 11, color: '#555', marginBottom: 14 }}>
+              {shownBetween
+                ? 'You go back to Assignments. Press Start calling there when you are back.'
+                : 'Your break starts as soon as this call is dispositioned. The call is not interrupted.'}
+            </div>
+            <div style={{ display: 'grid', gap: 4, marginBottom: 16 }}>
+              {BREAK_REASONS.map((r) => (
+                <label
+                  key={r.value}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
+                    border: `1px solid ${breakChoice === r.value ? VD.statusRed : VD.border}`,
+                    background: breakChoice === r.value ? '#FFF4F4' : '#FFF',
+                    cursor: 'pointer', fontSize: 13,
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="break-reason"
+                    value={r.value}
+                    checked={breakChoice === r.value}
+                    onChange={() => setBreakChoice(r.value)}
+                  />
+                  {r.label}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setBreakPickerOpen(false)} style={{ ...vdBtn('grey', { padding: '6px 16px', fontSize: 12 }) }}>
+                Cancel
+              </button>
+              <button
+                onClick={confirmBreak}
+                disabled={!breakChoice}
+                style={{
+                  ...vdBtn('green', { padding: '6px 20px', fontSize: 13 }),
+                  opacity: breakChoice ? 1 : 0.5,
+                  cursor: breakChoice ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {shownBetween ? 'Start break' : 'Break after this call'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BETWEEN QUEUE CALLS ───────────────────────────────────────────────
+        * The call was dispositioned; the agent stays at the desk. The next call
+        * counts down and dials here, or the agent is on a break until READY. */}
+      {shownBetween && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT, padding: 16,
+        }}>
+          <div role="status" aria-live="polite" style={{
+            background: VD.panel, border: `2px outset ${VD.borderLight}`,
+            padding: '22px 30px', textAlign: 'center', width: 'min(440px, 100%)',
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#777', marginBottom: 8 }}>
+              DIALER
+            </div>
+            {shownBetween.kind === 'countdown' && (
+              <>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Waiting for next call</div>
+                <div style={{ fontSize: 34, fontWeight: 700, color: VD.logoBlue, marginBottom: 6 }}>{shownBetween.secondsLeft}</div>
+                <div style={{ fontSize: 12, color: '#555', marginBottom: 12 }}>Next call dials automatically. Headset on.</div>
+              </>
+            )}
+            {shownBetween.kind === 'dialing' && (
+              <div style={{ fontSize: 16, fontWeight: 700, margin: '8px 0 14px' }}>Dialing next call…</div>
+            )}
+            {shownBetween.kind === 'loading' && (
+              <div style={{ fontSize: 14, fontWeight: 700, margin: '8px 0 14px' }}>Loading queue…</div>
+            )}
+            {shownBetween.kind === 'resume' && (
+              <>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>You have a call still open</div>
+                <div style={{ fontSize: 12, color: '#555', marginBottom: 12 }}>
+                  Resume it here to finish it. If it is live in another tab, it moves to this one.
+                </div>
+              </>
+            )}
+            {shownBetween.kind === 'ready' && (
+              <>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Ready for the next call?</div>
+                <div style={{ fontSize: 12, color: '#555', marginBottom: 12 }}>Press READY to take the next call.</div>
+              </>
+            )}
+            {(shownBetween.kind === 'error' || shownBetween.kind === 'end-failed') && (
+              <>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>The dialer needs you</div>
+                <div style={{ fontSize: 12, color: VD.statusRed, marginBottom: 12 }}>{shownBetween.message}</div>
+              </>
+            )}
+
+            <div style={{ fontSize: 12, marginBottom: 14 }}>
+              Calls in Queue: <b>{callsInQueue ?? '…'}</b>
+              <span style={{ margin: '0 8px', color: '#999' }}>|</span>
+              Calls taken: <b>{queueCompletedIds.length}</b>
+              {queueNote && <span style={{ marginLeft: 8, color: '#555' }}>· {queueNote}</span>}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+              {shownBetween.kind === 'ready' && (
+                <button onClick={handleReady} style={{ ...vdBtn('green', { padding: '6px 22px', fontSize: 13 }) }}>▶ READY</button>
+              )}
+              {shownBetween.kind === 'error' && (
+                <button onClick={continueQueue} style={{ ...vdBtn('green', { padding: '6px 16px', fontSize: 12 }) }}>RETRY</button>
+              )}
+              {shownBetween.kind === 'resume' && (
+                <button
+                  onClick={() => { unlockAudioContext(); adoptOpenCall(shownBetween.sessionId); }}
+                  style={{ ...vdBtn('green', { padding: '6px 22px', fontSize: 13 }) }}
+                >
+                  ▶ RESUME CALL
+                </button>
+              )}
+              {shownBetween.kind === 'end-failed' && (
+                <button onClick={retryEndCall} style={{ ...vdBtn('green', { padding: '6px 16px', fontSize: 12 }) }} title="Send the end of the call again">
+                  RETRY ENDING CALL
+                </button>
+              )}
+              {(shownBetween.kind === 'countdown' || shownBetween.kind === 'ready') && (
+                <>
+                  <button onClick={openBreakPicker} style={{ ...vdBtn('grey', { padding: '6px 16px', fontSize: 12 }) }}>☕ BREAK</button>
+                  <button onClick={handleShuffle} style={{ ...vdBtn('grey', { padding: '6px 16px', fontSize: 12 }) }}>⇄ SHUFFLE</button>
+                </>
+              )}
+              {shownBetween.kind !== 'dialing' && shownBetween.kind !== 'loading' && (
+                <button onClick={handleEndQueue} style={{ ...vdBtn('pink', { padding: '6px 16px', fontSize: 12 }) }}>■ END QUEUE</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {status === 'completed' && endReason && !shownBetween && (
         <div
           role="status"
           aria-live="polite"
@@ -760,7 +1270,7 @@ function CallPageInner() {
 
       {/* Connecting overlay — covers the brief Deepgram handshake after Start
        * (and any mid-call reconnect) so the trainee never stares at a dead UI. */}
-      {hasStarted && status !== 'active' && status !== 'ending' && status !== 'completed' && (
+      {callStarted && status !== 'active' && status !== 'ending' && status !== 'completed' && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT }}>
           <div style={{ background: VD.panel, border: `2px outset ${VD.borderLight}`, padding: '20px 30px', textAlign: 'center' }}>
             <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Connecting to customer…</div>
@@ -779,7 +1289,13 @@ function CallPageInner() {
         </div>
         <div style={{ display: 'flex', gap: 14 }}>
           <span style={{ color: VD.link, textDecoration: 'underline', ...dummyStyle }}>GROUPS</span>
-          <a href="#" style={{ color: VD.link, textDecoration: 'underline' }} onClick={(e) => { e.preventDefault(); logout(); router.push('/login'); }}>LOGOUT</a>
+          <a href="#" style={{ color: VD.link, textDecoration: 'underline' }} onClick={(e) => {
+            e.preventDefault();
+            // Logging out of the dialer ends a break and the queue run.
+            const out = () => { useQueueStore.getState().stop(); logout(); router.push('/login'); };
+            if (inQueue && token) dialer.endBreak(token).catch(() => {}).finally(out);
+            else out();
+          }}>LOGOUT</a>
         </div>
       </div>
 
@@ -803,7 +1319,23 @@ function CallPageInner() {
         </div>
         <div style={{ marginLeft: 20, fontSize: 12 }}>{clock}</div>
         <div style={{ marginLeft: 20, fontSize: 12 }}>session ID: <b>{sessionShort}</b></div>
-        <div style={{ marginLeft: 20, fontSize: 12 }}>Calls in Queue: <b>0</b></div>
+        <div style={{ marginLeft: 20, fontSize: 12 }}>
+          Calls in Queue: <b>{inQueue ? (callsInQueue ?? '…') : 0}</b>
+          {inQueue && (
+            <>
+              {' '}
+              <a
+                href="#"
+                style={{ color: VD.link, textDecoration: 'underline', marginLeft: 6 }}
+                onClick={(e) => { e.preventDefault(); handleShuffle(); }}
+                title="Shuffle the calls still waiting. The call on the line is not affected."
+              >
+                SHUFFLE
+              </a>
+              {queueNote && !shownBetween && <span style={{ marginLeft: 6, color: '#555' }}>{queueNote}</span>}
+            </>
+          )}
+        </div>
         {/*
           ── THE RECORDING INDICATOR (owner ruling 2026-09-01) ──────────────
           Persistent and visible for the whole call, not a one-off notice at
@@ -896,7 +1428,8 @@ function CallPageInner() {
         <span style={{ color: VD.link, textDecoration: 'underline', ...dummyStyle }}>FAST DIAL</span>
         <span style={{ color: VD.link, textDecoration: 'underline', ...dummyStyle }}>ENTER A PAUSE CODE</span>
         <span style={{ marginLeft: 10 }}>VICIDIAL <b>TRAINER-1.0</b></span>
-        <span>Scenario: <b>{scenarioName || '—'}</b></span>
+        {/* No scenario name here (owner ruling 2026-09-16): it tells the agent
+            what the customer is going to do before they have done it. */}
         <span>Duration: <b>{formatDuration(duration)}</b></span>
         <span style={{ color: VD.link, textDecoration: 'underline', ...dummyStyle }}>Show conference info</span>
         <span style={{ color: VD.statusRed }}>Alert is OFF</span>
@@ -968,6 +1501,25 @@ function CallPageInner() {
           <span style={{ fontSize: 11, fontWeight: 700, color: '#8A5A13' }}>
             ⏸ PAUSED (no Deepgram spend)
           </span>
+        )}
+        {inQueue && (
+          pendingBreakReason ? (
+            <button
+              onClick={() => useQueueStore.getState().setPendingBreak(null)}
+              style={{ ...vdBtn('grey', { padding: '5px 16px', fontSize: 12 }), background: '#FFD24A' }}
+              title="Cancel the break — the next call will dial after this one"
+            >
+              ☕ BREAK AFTER CALL: {breakLabel(pendingBreakReason).toUpperCase()} ✕
+            </button>
+          ) : (
+            <button
+              onClick={openBreakPicker}
+              style={{ ...vdBtn('grey', { padding: '5px 22px', fontSize: 12 }) }}
+              title="Take a break once this call is dispositioned"
+            >
+              ☕ BREAK
+            </button>
+          )
         )}
       </div>
 

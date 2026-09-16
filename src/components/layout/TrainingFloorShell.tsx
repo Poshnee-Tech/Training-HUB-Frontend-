@@ -24,6 +24,8 @@ import { ChevronDown, LogOut } from 'lucide-react';
 import { LogoTile } from '@/components/brand/Logo';
 import { useAuthStore } from '@/store/auth.store';
 import { cn } from '@/lib/utils';
+import { dialer } from '@/lib/api';
+import { useQueueStore } from '@/store/queue.store';
 
 type NavItem = {
   href: string;
@@ -338,8 +340,11 @@ function AgentMenu() {
 
   const signOut = () => {
     setOpen(false);
-    logout();
-    router.push('/login');
+    // Signing out ends a dialer break (ending none is a no-op) and the queue run.
+    const out = () => { useQueueStore.getState().stop(); logout(); router.push('/login'); };
+    const token = useAuthStore.getState().token;
+    if (token) dialer.endBreak(token).catch(() => {}).finally(out);
+    else out();
   };
 
   return (
