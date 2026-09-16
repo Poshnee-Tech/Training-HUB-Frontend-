@@ -294,6 +294,10 @@ export const BREAK_REASONS: Array<{ value: BreakReason; label: string }> = [
 
 export interface DialerQueueState {
   callsInQueue: number;
+  /** The next call's customer name only; nothing else about it is sent. */
+  nextCustomerName: string | null;
+  /** How long a break may last before it closes on its own (server rule). */
+  breakMaxSeconds: number;
   activeBreak: { id: string; reason: BreakReason; startedAt: string } | null;
   openSessionId: string | null;
   /** The open call belongs to the fronter/closer flow, which the queue never adopts. */

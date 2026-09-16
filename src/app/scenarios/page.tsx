@@ -20,6 +20,9 @@ export default function MyAssignmentsPage() {
   const [openQueueSessionId, setOpenQueueSessionId] = useState<string | null>(null);
   // The break taken from the call screen, which sends the agent here.
   const [activeBreak, setActiveBreak] = useState<DialerQueueState['activeBreak']>(null);
+  const [nextCustomerName, setNextCustomerName] = useState<string | null>(null);
+  // From the server, so the page and the rule always agree.
+  const [breakMaxSeconds, setBreakMaxSeconds] = useState(60 * 60);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [startingQueue, setStartingQueue] = useState(false);
   const [shuffling, setShuffling] = useState(false);
@@ -38,20 +41,36 @@ export default function MyAssignmentsPage() {
 
   useEffect(() => { loadFromStorage(); }, [loadFromStorage]);
 
-  // Break clock.
+  // Break clock. A break closes on its own at the limit; past it, re-check the
+  // server quietly every 10 s until the break is gone. Keyed on the break's
+  // id, so a re-check that returns the same break (a browser clock running
+  // ahead of the server's) does not restart the clock or flash a spinner.
+  const breakId = activeBreak?.id ?? null;
+  const breakStartedAt = activeBreak?.startedAt ?? null;
   useEffect(() => {
-    if (!activeBreak) return;
-    const t = setInterval(() => setClockNow(Date.now()), 1000);
+    if (!breakId || !breakStartedAt) return;
+    const endsAt = new Date(breakStartedAt).getTime() + breakMaxSeconds * 1000;
+    let lastCheck = 0;
+    const t = setInterval(() => {
+      const now = Date.now();
+      setClockNow(now);
+      if (now >= endsAt + 2000 && now - lastCheck >= 10000) {
+        lastCheck = now;
+        loadAssignments(true);
+      }
+    }, 1000);
     return () => clearInterval(t);
-  }, [activeBreak]);
+    // loadAssignments is redefined each render; the break is what matters here.
+  }, [breakId, breakStartedAt, breakMaxSeconds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!token) return;
     loadAssignments();
   }, [token]);
 
-  async function loadAssignments() {
-    setLoading(true);
+  /** `quiet`: refresh without the loading spinner (background re-checks). */
+  async function loadAssignments(quiet = false) {
+    if (!quiet) setLoading(true);
     try {
       const [res, queue] = await Promise.all([
         assignmentsApi.my(token!),
@@ -61,10 +80,12 @@ export default function MyAssignmentsPage() {
       setCallsInQueue(queue ? queue.data.callsInQueue : null);
       setOpenQueueSessionId(queue && !queue.data.openSessionIsDual ? queue.data.openSessionId : null);
       setActiveBreak(queue ? queue.data.activeBreak : null);
+      setNextCustomerName(queue ? queue.data.nextCustomerName : null);
+      if (queue) setBreakMaxSeconds(queue.data.breakMaxSeconds);
     } catch (err) {
       console.error('Failed to load assignments:', err);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }
 
@@ -128,6 +149,7 @@ export default function MyAssignmentsPage() {
     setShuffling(true);
     try {
       const res = await dialer.shuffle(token);
+      setNextCustomerName(res.data.nextCustomerName);
       showNotice('info', res.data.shuffled > 1 ? 'Queue shuffled.' : 'Nothing to shuffle.');
       await loadAssignments();
     } catch (err: any) {
@@ -223,10 +245,10 @@ export default function MyAssignmentsPage() {
         </header>
 
         {/* ── THE DIALER (owner ruling 2026-09-16) ─────────────────────────────
-          * A real dialer does not show the agent who is next: no customer
-          * name, age, mood, scenario or description before the call lands.
-          * Only how many calls are waiting and a way to start taking them.
-          * The single-call cards and their filters were removed for that. */}
+          * Before a call the agent sees how many calls are waiting, the next
+          * customer's NAME, and a way to start taking them — no age, mood,
+          * scenario, difficulty or description (the server does not send
+          * them). The single-call cards and their filters were removed. */}
         {loading ? (
           <div className="flex items-center justify-center py-14">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-air-signal border-t-transparent" />
@@ -247,6 +269,9 @@ export default function MyAssignmentsPage() {
                     return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
                   })()}
                 </span>
+                <span className="mt-1.5 block text-[12px] text-air-muted">
+                  Breaks end automatically after {Math.round(breakMaxSeconds / 60)} minutes.
+                </span>
               </div>
             )}
             <span className="font-mono-ui text-[10.5px] font-bold uppercase tracking-[0.12em] text-air-faint">Calls in Queue</span>
@@ -254,6 +279,9 @@ export default function MyAssignmentsPage() {
               {callsInQueue ?? '—'}
             </span>
             <p className="mt-3 max-w-sm text-[13px] leading-relaxed text-air-muted">
+              {!openQueueSessionId && nextCustomerName && callsInQueue !== 0 && (
+                <span className="mb-1 block text-air-text">Next customer: <span className="font-semibold">{nextCustomerName}</span></span>
+              )}
               {openQueueSessionId
                 ? 'You have a call still open. Resume it, and the queue continues after it.'
                 : activeBreak && callsInQueue !== 0
@@ -303,6 +331,9 @@ export default function MyAssignmentsPage() {
                 <div key={assignment.id} className="air-panel flex items-center justify-between gap-3 rounded-[14px] border px-4 py-3">
                   <span className="text-[13px] font-semibold text-air-text">
                     {assignment.agentRole === 'VERIFIER' ? 'Closer call' : 'Fronter call'}
+                    {assignment.scenario?.personaName && (
+                      <span className="font-normal text-air-muted"> · {assignment.scenario.personaName}</span>
+                    )}
                   </span>
                   <button
                     onClick={() => handleStartCall(assignment)}

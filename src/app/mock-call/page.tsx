@@ -20,8 +20,6 @@ import { Lock, PhoneCall, UserRound, Users } from 'lucide-react';
 import TrainingFloorShell from '@/components/layout/TrainingFloorShell';
 import { useAuthStore } from '@/store/auth.store';
 import { calls, journey as journeyApi, sessions, type JourneyStage } from '@/lib/api';
-import { difficultyLabel, productLabel } from '@/lib/labels';
-import { getCampaignColor, getDifficultyColor } from '@/lib/utils';
 
 export default function MockCallPage() {
   const router = useRouter();
@@ -146,20 +144,12 @@ export default function MockCallPage() {
                           <UserRound className="h-5 w-5" aria-hidden />
                         </div>
                         <div className="min-w-0 flex-1">
+                          {/* The customer's name only: no scenario, product,
+                              difficulty, age or description before the call
+                              (owner ruling 2026-09-16; not sent by the server). */}
                           <h2 className="truncate font-semibold text-gray-900">{s.personaName}</h2>
-                          <p className="truncate text-sm text-gray-500">{s.name}</p>
                         </div>
                       </div>
-
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        <span className={`badge ${getCampaignColor(s.campaign)}`}>{productLabel(s.campaign)}</span>
-                        <span className={`badge ${getDifficultyColor(s.difficulty)}`}>{difficultyLabel(s.difficulty)}</span>
-                        {s.personaAge && <span className="badge bg-gray-100 text-gray-700">Age {s.personaAge}</span>}
-                      </div>
-
-                      {s.description && (
-                        <p className="mt-3 line-clamp-3 text-sm text-gray-600">{s.description}</p>
-                      )}
 
                       <button
                         onClick={() => startCall(assignment)}
