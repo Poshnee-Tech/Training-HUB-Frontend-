@@ -1,69 +1,77 @@
 'use client';
 
 import { create } from 'zustand';
+import type { BreakReason } from '@/lib/api';
 
 /**
- * Auto-dial queue state. Lives in sessionStorage so a refresh mid-call
- * doesn't lose the trainee's progress through the queue.
+ * Dialer queue state for this browser tab. Lives in sessionStorage so a
+ * refresh mid-run keeps the list of calls taken and a break asked for.
  *
- * Intentionally separate from `call.store.ts`:
- *   - call.store.reset() runs whenever the URL session changes, which would
- *     wipe queue state we still need to drive the next session.
- *   - queue state is "recoverable UI state" (per code review), never the
- *     authoritative session state — server is.
+ * The SERVER owns the queue itself: what the next call is, how many are left,
+ * and whether the agent is on a break (`/api/agents/queue`,
+ * `/api/sessions/start-next`). This store only remembers what the run needs
+ * that the server does not: which calls this run has taken (for the summary
+ * page) and a break asked for during a live call, to take once it closes.
  *
- * `activeSessionId` is the guard that prevents stale sessionStorage from
- * making a manual single-call run accidentally trip the queue lifecycle.
+ * Intentionally separate from `call.store.ts`: call.store.reset() runs
+ * whenever the URL session changes, which would wipe this.
+ *
+ * `activeSessionId` is the guard that stops stale sessionStorage from making
+ * a manual single-call run behave like a queue call.
  */
 
-const STORAGE_KEY = 'callsim:queue:v1';
+const STORAGE_KEY = 'callsim:queue:v2';
 
-export type QueueMode = 'idle' | 'running' | 'finishing' | 'done';
-
-export interface QueueState {
-  mode: QueueMode;
-  assignmentIds: string[];
-  cursor: number;                    // index of the assignment currently/just-now being run
-  completedSessionIds: string[];     // sessions that already ran (for the summary URL)
-  activeSessionId: string | null;    // session id the queue currently owns; null when idle/done
-
-  start: (assignmentIds: string[], firstSessionId: string) => void;
-  /**
-   * Mark the current call done. Returns the fresh completedSessionIds list
-   * so callers can build the summary URL without reading a stale closure.
-   */
-  markCurrentDone: (sessionId: string) => string[];
-  /** Bump the cursor and bind the queue to the next session id. */
-  advance: (nextSessionId: string) => void;
-  /** Peek the next assignment id without mutating the store. */
-  peekNext: () => string | null;
-  setMode: (mode: QueueMode) => void;
-  stop: () => void;
-}
+export type QueueMode = 'idle' | 'running';
 
 interface PersistedShape {
   mode: QueueMode;
-  assignmentIds: string[];
-  cursor: number;
-  completedSessionIds: string[];
-  activeSessionId: string | null;
+  completedSessionIds: string[];      // calls this run has finished, in order (the summary URL)
+  activeSessionId: string | null;     // the queue call on the line; null between calls
+  pendingBreakReason: BreakReason | null; // break asked for during a call, taken after it closes
+  /**
+   * A queue call whose end request failed, with the disposition the agent
+   * picked, so RETRY — even after a reload — records their answer.
+   */
+  failedEnd: { sessionId: string; disposition?: string } | null;
 }
+
+export interface QueueState extends PersistedShape {
+  start: (firstSessionId: string) => void;
+  /**
+   * Mark the current call done. Returns the fresh completedSessionIds list so
+   * callers can build the summary URL without reading a stale closure.
+   */
+  markCurrentDone: (sessionId: string) => string[];
+  /** Bind the queue to the call that just dialed. */
+  advance: (nextSessionId: string) => void;
+  setPendingBreak: (reason: BreakReason | null) => void;
+  setFailedEnd: (failed: { sessionId: string; disposition?: string } | null) => void;
+  stop: () => void;
+}
+
+const EMPTY: PersistedShape = {
+  mode: 'idle',
+  completedSessionIds: [],
+  activeSessionId: null,
+  pendingBreakReason: null,
+  failedEnd: null,
+};
 
 function readPersisted(): PersistedShape | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as PersistedShape;
-    // Defensive normalization — refusing to trust a `finishing` state across
-    // a page reload is one of the explicit acceptance criteria. If we crashed
-    // mid-advance, the queue is no longer mid-anything; demote to idle so the
-    // user can restart cleanly.
-    if (parsed.mode === 'finishing') {
-      parsed.mode = 'idle';
-      parsed.activeSessionId = null;
-    }
-    return parsed;
+    const parsed = JSON.parse(raw) as Partial<PersistedShape>;
+    if (parsed.mode !== 'running') return null;
+    return {
+      mode: 'running',
+      completedSessionIds: Array.isArray(parsed.completedSessionIds) ? parsed.completedSessionIds : [],
+      activeSessionId: typeof parsed.activeSessionId === 'string' ? parsed.activeSessionId : null,
+      pendingBreakReason: parsed.pendingBreakReason ?? null,
+      failedEnd: parsed.failedEnd && typeof parsed.failedEnd.sessionId === 'string' ? parsed.failedEnd : null,
+    };
   } catch {
     return null;
   }
@@ -83,97 +91,85 @@ function clearPersisted(): void {
   } catch {}
 }
 
-const initial: PersistedShape = readPersisted() ?? {
-  mode: 'idle',
-  assignmentIds: [],
-  cursor: 0,
-  completedSessionIds: [],
-  activeSessionId: null,
-};
+function snapshot(s: PersistedShape): PersistedShape {
+  return {
+    mode: s.mode,
+    completedSessionIds: s.completedSessionIds,
+    activeSessionId: s.activeSessionId,
+    pendingBreakReason: s.pendingBreakReason,
+    failedEnd: s.failedEnd,
+  };
+}
 
-export const useQueueStore = create<QueueState>((set, get) => ({
-  ...initial,
-
-  start: (assignmentIds, firstSessionId) => {
-    const next: PersistedShape = {
-      mode: 'running',
-      assignmentIds,
-      cursor: 0,
-      completedSessionIds: [],
-      activeSessionId: firstSessionId,
-    };
-    writePersisted(next);
-    set(next);
-  },
-
-  markCurrentDone: (sessionId) => {
-    const cur = get();
-    const completed = cur.completedSessionIds.includes(sessionId)
-      ? cur.completedSessionIds
-      : [...cur.completedSessionIds, sessionId];
-    const patch = { completedSessionIds: completed, activeSessionId: null };
+export const useQueueStore = create<QueueState>((set, get) => {
+  const commit = (patch: Partial<PersistedShape>) => {
     set(patch);
-    writePersisted({
-      mode: cur.mode,
-      assignmentIds: cur.assignmentIds,
-      cursor: cur.cursor,
-      ...patch,
-    });
-    return completed;
-  },
+    writePersisted(snapshot(get()));
+  };
 
-  advance: (nextSessionId) => {
-    const cur = get();
-    const nextCursor = cur.cursor + 1;
-    const patch = {
-      cursor: nextCursor,
-      activeSessionId: nextSessionId,
-      mode: 'running' as QueueMode,
-    };
-    set(patch);
-    writePersisted({
-      assignmentIds: cur.assignmentIds,
-      completedSessionIds: cur.completedSessionIds,
-      ...patch,
-    });
-  },
+  return {
+    ...(readPersisted() ?? EMPTY),
 
-  peekNext: () => {
-    const cur = get();
-    return cur.assignmentIds[cur.cursor + 1] ?? null;
-  },
+    start: (firstSessionId) => {
+      commit({ ...EMPTY, mode: 'running', activeSessionId: firstSessionId });
+    },
 
-  setMode: (mode) => {
-    const cur = get();
-    set({ mode });
-    writePersisted({
-      mode,
-      assignmentIds: cur.assignmentIds,
-      cursor: cur.cursor,
-      completedSessionIds: cur.completedSessionIds,
-      activeSessionId: cur.activeSessionId,
-    });
-  },
+    markCurrentDone: (sessionId) => {
+      const cur = get();
+      const completed = cur.completedSessionIds.includes(sessionId)
+        ? cur.completedSessionIds
+        : [...cur.completedSessionIds, sessionId];
+      commit({ completedSessionIds: completed, activeSessionId: null });
+      return completed;
+    },
 
-  stop: () => {
-    clearPersisted();
-    set({
-      mode: 'idle',
-      assignmentIds: [],
-      cursor: 0,
-      completedSessionIds: [],
-      activeSessionId: null,
-    });
-  },
-}));
+    advance: (nextSessionId) => {
+      commit({ mode: 'running', activeSessionId: nextSessionId });
+    },
+
+    setPendingBreak: (reason) => {
+      commit({ pendingBreakReason: reason });
+    },
+
+    setFailedEnd: (failed) => {
+      commit({ failedEnd: failed });
+    },
+
+    stop: () => {
+      clearPersisted();
+      set({ ...EMPTY });
+    },
+  };
+});
+
+// ── HAS THIS PAGE HAD A CLICK? ──────────────────────────────────────────────
+// Browsers only let audio start without a click once the page has had one.
+// `navigator.userActivation` answers that directly; where it is missing
+// (Safari before 16.4) a click or key seen since this bundle loaded stands in.
+// This module is loaded by the assignments page too, so the click on
+// "Start my queue" is seen before the call screen exists.
+let gestureSeen = false;
+if (typeof document !== 'undefined') {
+  const seen = () => { gestureSeen = true; };
+  document.addEventListener('pointerdown', seen, { capture: true, once: true });
+  document.addEventListener('keydown', seen, { capture: true, once: true });
+}
+
+export function pageHasHadUserGesture(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const activation = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation;
+  return activation ? activation.hasBeenActive : gestureSeen;
+}
 
 /**
- * True only when the URL's sessionId matches the queue's owned session.
- * Manual single-call runs from the per-row Start button never satisfy this,
- * so they keep their old "end → /reports" behavior.
+ * True when the URL's session belongs to the running queue: the call on the
+ * line, or one this run already finished (the agent is between calls).
+ * Manual single-call runs never satisfy this, so they keep their
+ * "end → /reports" behaviour.
  */
-export function isQueueOwnedSession(currentSessionId: string | null): boolean {
-  if (!currentSessionId) return false;
+export function isQueueSession(sessionId: string | null): boolean {
+  if (!sessionId) return false;
   const q = useQueueStore.getState();
-  return (q.mode === 'running' || q.mode === 'finishing') && q.activeSessionId === currentSessionId;
+  return q.mode === 'running'
+    && (q.activeSessionId === sessionId || q.completedSessionIds.includes(sessionId));
 }
