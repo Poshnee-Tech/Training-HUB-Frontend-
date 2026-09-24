@@ -2024,7 +2024,18 @@ function sendPlaybackAck(
             lastCustomerTextRef.current = null;
           } else {
             lastCustomerTextRef.current = null;
-            addMessage({ id: crypto.randomUUID(), role: 'customer', content: msg.text, timestamp: new Date(), isFinal: true });
+            // A barged-in reply carries `displayText` ("…what this costs per—"):
+            // show where she was cut off instead of dropping the line. Speech
+            // below still uses `msg.text`, which is only what was heard.
+            const cutOff = typeof msg.displayText === 'string' && msg.displayText.length > 0;
+            addMessage({
+              id: crypto.randomUUID(),
+              role: 'customer',
+              content: cutOff ? msg.displayText : msg.text,
+              timestamp: new Date(),
+              isFinal: true,
+              ...(cutOff ? { interrupted: true, heardText: msg.text ?? '' } : {}),
+            });
             // Only speak if we haven't already spoken it via 'customer_text'
             if (useBrowserTtsRef.current) {
               const remainder = customerTokenBufferRef.current.trim();

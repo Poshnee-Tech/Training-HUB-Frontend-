@@ -11,6 +11,7 @@ import { sessions, calls, dialer, BREAK_REASONS, type BreakReason } from '@/lib/
 import { formatDuration } from '@/lib/utils';
 import { useQueueStore, isQueueSession, pageHasHadUserGesture } from '@/store/queue.store';
 import type { DialerQueueState } from '@/lib/api';
+import { InterruptedLine } from '@/components/report/InterruptedLine';
 
 /* =========================================================================
  * VICIDIAL-styled agent call screen.
@@ -1599,7 +1600,7 @@ function CallPageInner() {
                       <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 2, fontWeight: 600 }}>
                         {isAgent ? 'You' : 'Customer'}
                       </div>
-                      {msg.content}
+                      {msg.interrupted ? <InterruptedLine content={msg.content} heard={msg.heardText ?? ''} /> : msg.content}
                     </div>
                   </div>
                 );

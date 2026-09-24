@@ -6,6 +6,14 @@ export interface TranscriptMessage {
   content: string;
   timestamp: Date;
   isFinal: boolean;
+  /**
+   * The trainee talked over this customer line. `content` is then the display
+   * text — the heard whole sentences, an estimate of how far into the next one
+   * she got, and "—" — and `heardText` is the part that was definitely heard.
+   * Display only: the live transcript is never sent back to the server.
+   */
+  interrupted?: boolean;
+  heardText?: string;
 }
 
 export interface CoachingTipMessage {
