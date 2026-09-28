@@ -90,6 +90,7 @@ function dispositionLabel(disposition: string | undefined): string {
 import { difficultyLabel, evaluationStatusCopy, productLabel, scoreBandLabel } from '@/lib/labels';
 import { formatDuration, getScoreColor, getDifficultyColor, getCampaignColor, cn } from '@/lib/utils';
 import { VoiceDelivery } from '@/components/report/VoiceDelivery';
+import { InterruptedLine, interruptedFromRow } from '@/components/report/InterruptedLine';
 
 
 /**
@@ -1260,7 +1261,12 @@ export default function ReportDetailPage() {
                           <div className="text-xs font-medium mb-1 opacity-70">
                             {msg.role === 'AGENT' ? 'Agent' : msg.role === 'CUSTOMER' ? 'Customer' : 'System'}
                           </div>
-                          <p className="text-sm">{msg.content}</p>
+                          <p className="text-sm">
+                            {(() => {
+                              const cut = interruptedFromRow(msg);
+                              return cut ? <InterruptedLine {...cut} /> : msg.content;
+                            })()}
+                          </p>
                         </div>
                       </div>
                       {/* Annotations */}

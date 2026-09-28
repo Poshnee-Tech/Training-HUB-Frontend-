@@ -586,7 +586,7 @@ export function unlockAudioContext() {
 }
 
 function pcmSegmentKey(identity: SegmentIdentity): string {
-  return JSON.stringify([identity.connectionId, identity.turnId, identity.segmentId, identity.audioSourceId, identity.sequence]);
+  return JSON.stringify([identity.sessionId, identity.connectionId, identity.turnId, identity.segmentId, identity.audioSourceId, identity.sequence]);
 }
 
 export function useWebSocket() {
@@ -669,6 +669,15 @@ export function useWebSocket() {
   // PCM buffer from the same segment, followed by the existing drain check.
   const pcmIdentitiesRef = useRef(new WeakMap<ArrayBuffer, SegmentIdentity>());
   const scheduledPcmSegmentsRef = useRef(new Set<string>());
+  /** Scheduled PCM, keyed by segment, retained until it finishes or is stopped. */
+  const playedPcmRef = useRef<Map<string, {
+    identity: SegmentIdentity;
+    chunks: Array<{ start: number; duration: number }>;
+  }>>(new Map());
+  const latestPcmIdentityRef = useRef<SegmentIdentity | null>(null);
+  // Retain a bounded playhead history after drain: a failure request can arrive later.
+  const drainedPlayheadsRef = useRef(new Map<string, number>());
+  const recoveryRequestRef = useRef<{ segment: SegmentIdentity; requestId: string } | null>(null);
   /**
    * The live socket, for callers that fire outside a render.
    *
@@ -815,6 +824,7 @@ function sendPlaybackAck(
   segment: SegmentIdentity,
   kind: 'started' | 'completed' | 'interrupted' | 'cancelled' | 'disconnected',
   bufferedAheadMs?: number,
+  playbackStoppedAtMs?: number,
 ): void {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   try {
@@ -826,7 +836,7 @@ function sendPlaybackAck(
      * end-of-playback in the user's ears, watch your audio output queue, not
      * this event." Reporting it closes the loop.
      */
-    socket.send(JSON.stringify({ type: 'playback_ack', kind, segment, bufferedAheadMs }));
+    socket.send(JSON.stringify({ type: 'playback_ack', kind, segment, bufferedAheadMs, playbackStoppedAtMs }));
   } catch {
     // A failed ack must never take the call down with it; the server's own
     // timeout is the backstop.
@@ -892,6 +902,19 @@ function sendPlaybackAck(
         sendPlaybackAck(liveSocketRef.current, finished, 'completed');
       }
     }
+    for (const [key, timeline] of playedPcmRef.current) {
+      const played = timeline.chunks.reduce((sum, part) => sum + part.duration, 0) * 1000;
+      drainedPlayheadsRef.current.set(key, (drainedPlayheadsRef.current.get(key) ?? 0) + played);
+    }
+    while (drainedPlayheadsRef.current.size > 8) drainedPlayheadsRef.current.delete(drainedPlayheadsRef.current.keys().next().value!);
+    const request = recoveryRequestRef.current;
+    if (request) {
+      recoveryRequestRef.current = null;
+      try { liveSocketRef.current?.send(JSON.stringify({ type: 'playback_snapshot', ...request,
+        playedMs: drainedPlayheadsRef.current.get(pcmSegmentKey(request.segment)) ?? 0 })); } catch {}
+    }
+    playedPcmRef.current.clear();
+    latestPcmIdentityRef.current = null;
     scheduledPcmSegmentsRef.current.clear();
     setSpeaking(false);
     scheduleMicGuardRelease();
@@ -951,7 +974,7 @@ function sendPlaybackAck(
          */
         const sawFinalFrame = pendingFinalAckRef.current !== null;
         const waitedMs = Date.now() - drainWaitStartedRef.current;
-        if (!sawFinalFrame && waitedMs < DRAIN_WITHOUT_FINAL_BACKSTOP_MS) {
+        if (!sawFinalFrame && !recoveryRequestRef.current && waitedMs < DRAIN_WITHOUT_FINAL_BACKSTOP_MS) {
           schedulePcmPlaybackReleaseRef.current?.();
           return;
         }
@@ -1079,7 +1102,7 @@ function sendPlaybackAck(
     }
   }, [stopRingback]);
 
-  const stopAudioPlayback = useCallback(() => {
+  const stopAudioPlayback = useCallback((reason: 'interrupted' | 'cancelled' = 'cancelled') => {
     if (pcmPlaybackReleaseTimerRef.current) {
       clearTimeout(pcmPlaybackReleaseTimerRef.current);
       pcmPlaybackReleaseTimerRef.current = null;
@@ -1088,12 +1111,26 @@ function sendPlaybackAck(
     // way was NOT heard, and saying so is what lets the engine distinguish an
     // interruption from a line that played out — the playback ledger poisons
     // the segment rather than recording it as delivered.
-    const abandoned = pendingFinalAckRef.current;
+    const abandoned = pendingFinalAckRef.current ?? latestPcmIdentityRef.current;
     scheduledPcmSegmentsRef.current.clear();
     if (abandoned) {
       pendingFinalAckRef.current = null;
-      sendPlaybackAck(liveSocketRef.current, abandoned, 'interrupted');
+      const ctx = getAudioContext();
+      const timeline = playedPcmRef.current.get(pcmSegmentKey(abandoned));
+      const playhead = ctx && timeline
+        ? Math.round(timeline.chunks.reduce((sum, part) => sum
+          + Math.min(part.duration, Math.max(0, ctx.currentTime - part.start)), 0) * 1000)
+        : 0;
+      const bufferedAheadMs = Math.round(Math.max(0, nextPlayTimeRef.current - ctx.currentTime) * 1000
+        + queuedAudioSeconds() * 1000);
+      const totalPlayed = playhead + (drainedPlayheadsRef.current.get(pcmSegmentKey(abandoned)) ?? 0);
+      sendPlaybackAck(liveSocketRef.current, abandoned, reason, bufferedAheadMs, totalPlayed);
+      drainedPlayheadsRef.current.set(pcmSegmentKey(abandoned), totalPlayed);
+      while (drainedPlayheadsRef.current.size > 8) drainedPlayheadsRef.current.delete(drainedPlayheadsRef.current.keys().next().value!);
+      recoveryRequestRef.current = null;
     }
+    playedPcmRef.current.clear();
+    latestPcmIdentityRef.current = null;
     audioQueueRef.current.length = 0;
     pcmCarryRef.current = null;
     nextPlayTimeRef.current = 0;
@@ -1115,7 +1152,7 @@ function sendPlaybackAck(
     isPlayingRef.current = false;
     setSpeaking(false);
     releaseMicGuardNow();
-  }, [setSpeaking, releaseMicGuardNow]);
+  }, [setSpeaking, releaseMicGuardNow, queuedAudioSeconds]);
 
 
   /**
@@ -1423,7 +1460,14 @@ function sendPlaybackAck(
           try {
             source.start(startAt);
             const identity = pcmIdentitiesRef.current.get(chunk);
-            if (identity) scheduledPcmSegmentsRef.current.add(pcmSegmentKey(identity));
+            if (identity) {
+              const key = pcmSegmentKey(identity);
+              scheduledPcmSegmentsRef.current.add(key);
+              const timeline = playedPcmRef.current.get(key) ?? { identity, chunks: [] };
+              timeline.chunks.push({ start: startAt, duration: audioBuffer.duration });
+              playedPcmRef.current.set(key, timeline);
+              latestPcmIdentityRef.current = identity;
+            }
           } catch (err) {
             // Never leave a source that failed to start in the scheduled set:
             // it has no onended event, so one stale entry would force every
@@ -1477,6 +1521,7 @@ function sendPlaybackAck(
             try {
               liveSocketRef.current?.send(JSON.stringify({
                 type: 'playback_progress',
+                segment: pcmIdentitiesRef.current.get(chunk),
                 bufferedAheadMs,
                 underruns: pcmUnderrunsRef.current,
               }));
@@ -1654,6 +1699,7 @@ function sendPlaybackAck(
 
           if (decoded) {
             const identity = identityOf(decoded.header);
+            latestPcmIdentityRef.current = identity;
             if (pcm.byteLength >= 2) pcmIdentitiesRef.current.set(pcm, identity);
             // First chunk of a segment: tell the server it has started, so the
             // turn engine knows the line reached the trainee rather than
@@ -1866,7 +1912,7 @@ function sendPlaybackAck(
 
         case 'user_started_speaking':
           console.log('[Latency] Deepgram detected user speech / barge-in');
-          stopAudioPlayback();
+          stopAudioPlayback('interrupted');
           cancelAllSpeech();
           // Barge-in: the backend will follow with a customer_text_complete
           // containing only what was actually spoken — drop the interim.
@@ -1940,6 +1986,8 @@ function sendPlaybackAck(
             content: msg.text,
             timestamp: new Date(),
             isFinal: true,
+            ...(msg.displayText ? { content: msg.displayText, interrupted: true,
+              heardText: msg.text ?? '', interruptionReason: msg.interruptionReason } : {}),
           });
           break;
         }
@@ -2024,7 +2072,18 @@ function sendPlaybackAck(
             lastCustomerTextRef.current = null;
           } else {
             lastCustomerTextRef.current = null;
-            addMessage({ id: crypto.randomUUID(), role: 'customer', content: msg.text, timestamp: new Date(), isFinal: true });
+            // A barged-in reply carries `displayText` ("…what this costs per—"):
+            // show where she was cut off instead of dropping the line. Speech
+            // below still uses `msg.text`, which is only what was heard.
+            const cutOff = typeof msg.displayText === 'string' && msg.displayText.length > 0;
+            addMessage({
+              id: crypto.randomUUID(),
+              role: 'customer',
+              content: cutOff ? msg.displayText : msg.text,
+              timestamp: new Date(),
+              isFinal: true,
+              ...(cutOff ? { interrupted: true, heardText: msg.text ?? '', interruptionReason: msg.interruptionReason } : {}),
+            });
             // Only speak if we haven't already spoken it via 'customer_text'
             if (useBrowserTtsRef.current) {
               const remainder = customerTokenBufferRef.current.trim();
@@ -2042,6 +2101,26 @@ function sendPlaybackAck(
             customerResponseCompleteCallbackRef.current?.();
           }
           break;
+
+        case 'audio_incomplete': {
+          if (!msg.segment || typeof msg.requestId !== 'string') break;
+          const key = pcmSegmentKey(msg.segment);
+          // Never drain, stop or report the playhead of a different turn.
+          const active = latestPcmIdentityRef.current;
+          if (active && pcmSegmentKey(active) === key && pcmPlaybackPending()) {
+            recoveryRequestRef.current = { segment: msg.segment, requestId: msg.requestId };
+            customerAudioStreamDoneRef.current = true;
+            schedulePcmPlaybackRelease();
+          } else {
+            const timeline = playedPcmRef.current.get(key);
+            const now = getAudioContext().currentTime;
+            const playedMs = (drainedPlayheadsRef.current.get(key) ?? 0)
+              + (timeline?.chunks.reduce((sum, part) => sum + Math.min(part.duration, Math.max(0, now - part.start)), 0) ?? 0) * 1000;
+            try { socket.send(JSON.stringify({ type: 'playback_snapshot', segment: msg.segment,
+              requestId: msg.requestId, playedMs })); } catch {}
+          }
+          break;
+        }
 
         case 'tts_complete':
           // The SERVER has finished streaming this turn's audio. That is not
