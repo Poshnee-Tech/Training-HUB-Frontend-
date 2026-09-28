@@ -1600,7 +1600,7 @@ function CallPageInner() {
                       <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 2, fontWeight: 600 }}>
                         {isAgent ? 'You' : 'Customer'}
                       </div>
-                      {msg.interrupted ? <InterruptedLine content={msg.content} heard={msg.heardText ?? ''} /> : msg.content}
+                      {msg.interrupted ? <InterruptedLine content={msg.content} heard={msg.heardText ?? ''} reason={msg.interruptionReason} /> : msg.content}
                     </div>
                   </div>
                 );

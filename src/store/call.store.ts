@@ -14,6 +14,7 @@ export interface TranscriptMessage {
    */
   interrupted?: boolean;
   heardText?: string;
+  interruptionReason?: string;
 }
 
 export interface CoachingTipMessage {

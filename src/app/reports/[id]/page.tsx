@@ -1264,7 +1264,7 @@ export default function ReportDetailPage() {
                           <p className="text-sm">
                             {(() => {
                               const cut = interruptedFromRow(msg);
-                              return cut ? <InterruptedLine content={cut.content} heard={cut.heard} /> : msg.content;
+                              return cut ? <InterruptedLine {...cut} /> : msg.content;
                             })()}
                           </p>
                         </div>
