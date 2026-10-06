@@ -84,6 +84,18 @@ export async function authenticatedFetch(
   return res;
 }
 
+/**
+ * The backend's error text, whatever shape it arrives in. Every route sends
+ * `error` as text, but the auth rate limiter once sent an object, and
+ * `new Error(object)` printed "[object Object]" on the login page.
+ */
+export function errorText(body: unknown, fallback: string): string {
+  const error = (body as { error?: unknown } | null | undefined)?.error;
+  if (typeof error === 'string' && error.trim()) return error;
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  return typeof message === 'string' && message.trim() ? message : fallback;
+}
+
 async function request<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   const { method = 'GET', body, token } = options;
 
@@ -104,7 +116,7 @@ async function request<T>(endpoint: string, options: ApiOptions = {}): Promise<T
   // the generic session-expired redirect used by protected API requests.
   if (res.status === 401 && endpoint === '/api/auth/login') {
     const failed = await res.json().catch(() => ({} as { error?: string }));
-    throw new Error(failed.error || 'Email or password is incorrect.');
+    throw new Error(errorText(failed, 'Email or password is incorrect.'));
   }
 
   if (res.status === 401) {
@@ -137,7 +149,7 @@ async function request<T>(endpoint: string, options: ApiOptions = {}): Promise<T
   }
 
   if (!res.ok) {
-    throw new Error(data.error || `API ${endpoint} failed with status ${res.status}`);
+    throw new Error(errorText(data, `API ${endpoint} failed with status ${res.status}`));
   }
 
   return data;
@@ -825,7 +837,7 @@ export const pronunciation = {
       body: wav,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((data as any).error || `Scoring failed (${res.status})`);
+    if (!res.ok) throw new Error(errorText(data, `Scoring failed (${res.status})`));
     return (data as any).data as PracticeResult;
   },
 
