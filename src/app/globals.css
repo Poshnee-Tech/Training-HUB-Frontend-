@@ -928,7 +928,8 @@
   display: grid; gap: 6px;
   font-size: 12.5px; font-weight: 600; color: #4A3D50;
 }
-.su input {
+.su input,
+.su select {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid #E4DCE6;
@@ -940,7 +941,8 @@
   color: #1E1520;
 }
 .su input::placeholder { color: #7A7080; }
-.su input:focus {
+.su input:focus,
+.su select:focus {
   outline: none;
   border-color: #5A3A66;
   box-shadow: 0 0 0 3px rgba(90, 58, 102, .12);

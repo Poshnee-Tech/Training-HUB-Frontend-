@@ -22,6 +22,7 @@
 
 import { FormEvent, useState } from 'react';
 import { auth } from '@/lib/api';
+import { TRACK_OPTIONS, type Track } from '@/lib/labels';
 
 type Step = 'email' | 'code' | 'details' | 'done';
 
@@ -29,7 +30,9 @@ export default function SignupFlow({ onCancel }: { onCancel?: () => void }) {
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
-  const [form, setForm] = useState({ firstName: '', lastName: '', password: '' });
+  const [form, setForm] = useState<{ firstName: string; lastName: string; password: string; track: Track | '' }>(
+    { firstName: '', lastName: '', password: '', track: '' },
+  );
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -67,11 +70,13 @@ export default function SignupFlow({ onCancel }: { onCancel?: () => void }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     return run(async () => {
+      if (!form.track) throw new Error('Choose your role.');
       await auth.signup({
         email: email.trim(),
         password: form.password,
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
+        track: form.track,
       });
       setStep('done');
     });
@@ -192,6 +197,19 @@ export default function SignupFlow({ onCancel }: { onCancel?: () => void }) {
               />
             </label>
           </div>
+          <label>
+            Role
+            <select
+              required
+              value={form.track}
+              onChange={(e) => setForm({ ...form, track: e.target.value as Track | '' })}
+            >
+              <option value="" disabled>Choose your role</option>
+              {TRACK_OPTIONS.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </label>
           <label>
             Password
             <input

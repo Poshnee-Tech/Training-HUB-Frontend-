@@ -7,6 +7,8 @@ interface User {
   firstName: string;
   lastName: string;
   role: string;
+  /** CSR or SELF_VERIFIER. Absent on a user cached before tracks existed. */
+  track?: 'CSR' | 'SELF_VERIFIER';
 }
 
 interface AuthState {
