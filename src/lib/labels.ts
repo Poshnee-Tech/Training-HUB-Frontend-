@@ -45,7 +45,7 @@ export function productLabel(campaign?: string | null): string {
 export type Track = 'CSR' | 'SELF_VERIFIER';
 
 export const TRACK_OPTIONS: ReadonlyArray<{ value: Track; label: string }> = [
-  { value: 'CSR', label: 'CSR' },
+  { value: 'CSR', label: 'Fronter' },
   { value: 'SELF_VERIFIER', label: 'Self Verifier' },
 ];
 
