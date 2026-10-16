@@ -36,6 +36,37 @@ export function productLabel(campaign?: string | null): string {
   return PRODUCT_LABELS[campaign] ?? titleCase(campaign);
 }
 
+/* ── track ────────────────────────────────────────────────── */
+
+/**
+ * `track` on the wire: which job this agent trains for. Chosen at signup,
+ * corrected by an admin if needed.
+ */
+export type Track = 'CSR' | 'SELF_VERIFIER';
+
+export const TRACK_OPTIONS: ReadonlyArray<{ value: Track; label: string }> = [
+  { value: 'CSR', label: 'CSR' },
+  { value: 'SELF_VERIFIER', label: 'Self Verifier' },
+];
+
+export function trackLabel(track?: string | null): string {
+  if (!track) return '—';
+  return TRACK_OPTIONS.find((t) => t.value === track)?.label ?? titleCase(track);
+}
+
+/* ── compliance gates ─────────────────────────────────────── */
+
+/** Readable names for the Self Verifier disclaimer gates; other gates read as before. */
+const GATE_LABELS: Record<string, string> = {
+  sv_dnc_permission_not_asked: 'Do Not Call permission was not asked',
+  sv_dnc_no_clear_consent: 'Transferred without clear consent to the Do Not Call permission',
+  sv_benefits_disclaimer_missing: 'Benefits disclaimer (no groceries, food or cash back) was not given',
+};
+
+export function gateLabel(gateId: string): string {
+  return GATE_LABELS[gateId] ?? gateId;
+}
+
 /* ── difficulty ───────────────────────────────────────────── */
 
 const DIFFICULTY_LABELS: Record<string, string> = {

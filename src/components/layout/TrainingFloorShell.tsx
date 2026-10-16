@@ -25,6 +25,7 @@ import { LogoTile } from '@/components/brand/Logo';
 import { useAuthStore } from '@/store/auth.store';
 import { cn } from '@/lib/utils';
 import { dialer } from '@/lib/api';
+import { trackLabel } from '@/lib/labels';
 import { useQueueStore } from '@/store/queue.store';
 
 type NavItem = {
@@ -370,9 +371,9 @@ function AgentMenu() {
           </span>
 
           <span className="block truncate font-mono-ui text-[9px] uppercase tracking-[0.14em] text-[#AE9FAF]">
-            {user?.role === 'AGENT'
-              ? 'Agent'
-              : user?.role ?? 'Agent'}
+            {user?.role === 'AGENT' || !user?.role
+              ? (user?.track ? trackLabel(user.track) : 'Agent')
+              : user.role}
           </span>
         </span>
 

@@ -87,7 +87,7 @@ function dispositionLabel(disposition: string | undefined): string {
   return disposition ? labels[disposition] ?? disposition.replaceAll('_', ' ') : 'Normal call';
 }
 
-import { difficultyLabel, evaluationStatusCopy, productLabel, scoreBandLabel } from '@/lib/labels';
+import { difficultyLabel, evaluationStatusCopy, gateLabel, productLabel, scoreBandLabel } from '@/lib/labels';
 import { formatDuration, getScoreColor, getDifficultyColor, getCampaignColor, cn } from '@/lib/utils';
 import { VoiceDelivery } from '@/components/report/VoiceDelivery';
 import { InterruptedLine, interruptedFromRow } from '@/components/report/InterruptedLine';
@@ -1047,7 +1047,7 @@ export default function ReportDetailPage() {
                       Compliance gate: {fronterScorecard.score.gate.applied.replaceAll('_', ' ')}. {[
                         ...fronterScorecard.score.gate.confirmedCritical,
                         ...fronterScorecard.score.gate.confirmedMajor,
-                      ].join(', ')}
+                      ].map(gateLabel).join(', ')}
                     </div>
                   )}
                   <div className="divide-y divide-gray-200 border-y border-gray-200">

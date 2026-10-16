@@ -205,7 +205,7 @@ export const auth = {
       { method: 'POST', body: { email, code } },
     ),
 
-  signup: (data: { email: string; password: string; firstName: string; lastName: string }) =>
+  signup: (data: { email: string; password: string; firstName: string; lastName: string; track: 'CSR' | 'SELF_VERIFIER' }) =>
     request<{ success: boolean; data: { id: string }; message: string }>(
       '/api/auth/signup',
       { method: 'POST', body: data },
