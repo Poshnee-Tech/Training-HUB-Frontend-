@@ -57,9 +57,9 @@ export default function LoginPage() {
         login(res.data.user, res.data.token);
         redirectAfterAuth(Boolean(res.data.user?.mustChangePassword));
       } else {
-        // Unreachable: the sign-up tab renders SignupFlow, which files an
-        // approval request rather than creating an account. Kept as a guard
-        // so this branch cannot quietly start creating sessions again.
+        // Unreachable: the sign-up tab renders SignupFlow, which owns signup
+        // (one step, signs the person in). Kept as a guard so this form never
+        // grows a second, divergent signup path.
         throw new Error('Use the sign-up form.');
       }
     } catch (err: any) {
@@ -197,9 +197,8 @@ export default function LoginPage() {
                 </button>
               </form>
             ) : (
-              /* Signing up files a request for a trainer to approve, so it
-                 cannot share the sign-in form — there is no session at the
-                 end of it. Same component the landing page uses. */
+              /* One-step signup: creates the account and signs the person in
+                 (owner ruling 2026-11-25). Same component the landing page uses. */
               <SignupFlow />
             )}
 

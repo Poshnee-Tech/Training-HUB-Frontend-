@@ -186,27 +186,12 @@ export const auth = {
     }),
 
   /**
-   * Signup is three steps now, and every one of them is decided by the
-   * server: ask for a code, prove you received it, then file the request.
-   *
-   * None of these create an account. A trainer approving the request is what
-   * does that, which is why `signup` resolves with a message rather than a
-   * session — there is nothing to sign in with yet.
+   * Signup is one step (owner ruling 2026-11-25): the server creates the agent
+   * account and signs them in, so this resolves with a session exactly like
+   * `login` does — no emailed code, no trainer approval.
    */
-  requestSignupCode: (email: string) =>
-    request<{ success: boolean; message: string }>(
-      '/api/auth/signup/request-otp',
-      { method: 'POST', body: { email } },
-    ),
-
-  verifySignupCode: (email: string, code: string) =>
-    request<{ success: boolean }>(
-      '/api/auth/signup/verify-otp',
-      { method: 'POST', body: { email, code } },
-    ),
-
   signup: (data: { email: string; password: string; firstName: string; lastName: string; track: 'CSR' | 'SELF_VERIFIER' }) =>
-    request<{ success: boolean; data: { id: string }; message: string }>(
+    request<{ success: boolean; data: { user: any; token: string } }>(
       '/api/auth/signup',
       { method: 'POST', body: data },
     ),
