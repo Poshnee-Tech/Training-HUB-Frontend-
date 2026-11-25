@@ -740,7 +740,7 @@ export default function LandingPage() {
             <h2>Create your account</h2>
 
             <p>
-              Confirm your email, then a trainer approves the account.
+              Fill in your details and start training straight away.
             </p>
 
 
